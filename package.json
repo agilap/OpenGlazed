@@ -1,0 +1,22 @@
+{
+  "name": "glazed-workspace",
+  "version": "0.3.0",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "install:all": "npm install",
+    "dev": "concurrently -n backend,frontend -c cyan,green \"npm run dev -w backend\" \"npm run dev -w frontend\"",
+    "start": "concurrently -n backend,frontend -c cyan,green \"npm run start -w backend\" \"npm run dev -w frontend\"",
+    "backend": "npm run dev -w backend",
+    "frontend": "npm run dev -w frontend",
+    "model": "PYTHON=python3; if [ -x .venv/bin/python ]; then PYTHON=.venv/bin/python; fi; $PYTHON -m uvicorn --app-dir model-server app_mistral:app --host 0.0.0.0 --port 8000",
+    "model:cpu": "DEVICE_MODE=cpu PYTHON=python3; if [ -x .venv/bin/python ]; then PYTHON=.venv/bin/python; fi; $PYTHON -m uvicorn --app-dir model-server app_mistral:app --host 0.0.0.0 --port 8000",
+    "model:gpu": "DEVICE_MODE=gpu PYTHON=python3; if [ -x .venv/bin/python ]; then PYTHON=.venv/bin/python; fi; $PYTHON -m uvicorn --app-dir model-server app_mistral:app --host 0.0.0.0 --port 8000"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

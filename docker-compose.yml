@@ -1,0 +1,30 @@
+# Glazed — fully local stack (no external accounts required)
+#
+#   docker compose up -d        # starts Postgres + pgvector on :5432
+#   cp backend/.env.example backend/.env   # then set DATABASE_URL below
+#   npm run dev                 # backend :3000 + frontend :5173
+#
+# The init script (db/init.sql) creates the schema + retrieval functions
+# automatically on first boot if they don't exist yet.
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: glazed-db
+    environment:
+      POSTGRES_USER: glazed
+      POSTGRES_PASSWORD: glazed
+      POSTGRES_DB: glazed
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - glazed_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U glazed -d glazed"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  glazed_pgdata:
