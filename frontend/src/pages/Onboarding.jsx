@@ -544,8 +544,10 @@ export default function Onboarding() {
           background: linear-gradient(90deg, #6366f1, #c0c1ff);
           height: 100%;
           border-radius: 3px;
-          width: 0;
-          transition: width 0.6s ease;
+          width: 100%;
+          transform: scaleX(0);
+          transform-origin: left;
+          transition: transform 0.6s ease;
         }
 
         .ob2-progress-text {
@@ -787,7 +789,7 @@ export default function Onboarding() {
               </div>
 
               <div className="ob2-progress-track" role="progressbar" aria-valuenow={progressValue}>
-                <div className="ob2-progress-fill" style={{ width: `${progressValue}%` }} />
+                <div className="ob2-progress-fill" style={{ transform: `scaleX(${progressValue / 100})` }} />
               </div>
 
               <p className="ob2-progress-text">STATUS: {progressValue}% COMPLETE</p>

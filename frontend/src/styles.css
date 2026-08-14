@@ -101,10 +101,10 @@ textarea {
   font-weight: 800;
   letter-spacing: -0.02em;
   line-height: 1.08;
-  background: linear-gradient(135deg, var(--on-surface) 0%, var(--on-surface-muted) 100%);
-  background-clip: text;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: var(--on-surface);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.08;
 }
 
 .onboarding-subtitle {
@@ -233,11 +233,13 @@ textarea {
 }
 
 .onboarding-progress-fill {
-  width: 0;
+  width: 100%;
   height: 100%;
   border-radius: 2px;
   background: linear-gradient(90deg, var(--primary-container), var(--primary));
-  transition: width 0.6s ease;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.6s ease;
 }
 
 .onboarding-progress-status {
@@ -539,9 +541,12 @@ textarea {
 }
 
 .dashboard-ingest-fill {
+  width: 100%;
   height: 100%;
   background: linear-gradient(90deg, var(--primary-container), var(--primary));
-  transition: width 0.6s ease;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.6s ease;
 }
 
 .dashboard-table-card {

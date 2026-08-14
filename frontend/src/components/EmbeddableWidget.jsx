@@ -422,7 +422,7 @@ export default function EmbeddableWidget({ businessId }) {
           height: 8px;
           border-radius: 50%;
           background: #94a3b8;
-          animation: typingBounce 0.6s infinite;
+          animation: typingDots 0.6s infinite;
         }
 
         .gzd-typing-bubble span:nth-child(1) { animation-delay: 0s; }
@@ -641,7 +641,7 @@ export default function EmbeddableWidget({ businessId }) {
           100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); }
         }
 
-        @keyframes typingBounce {
+        @keyframes typingDots {
           0%, 60%, 100% { transform: translateY(0); }
           30% { transform: translateY(-5px); }
         }

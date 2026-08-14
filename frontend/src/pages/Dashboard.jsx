@@ -278,7 +278,7 @@ export default function Dashboard() {
           <div className="dashboard-ingest-banner">
             <span>Ingesting knowledge base: {progressValue}%</span>
             <div className="dashboard-ingest-track">
-              <div className="dashboard-ingest-fill" style={{ width: `${progressValue}%` }} />
+              <div className="dashboard-ingest-fill" style={{ transform: `scaleX(${progressValue / 100})` }} />
             </div>
           </div>
         )}
