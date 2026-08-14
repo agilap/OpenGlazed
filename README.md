@@ -159,7 +159,6 @@ Aligned with the sales-conversion JTBD (used only if you later fine-tune):
 
 ## Notes
 
-- Database is local PostgreSQL + pgvector (via `docker compose up` + `db/init.sql`). No cloud account needed. The model server is **optional**: without `MODEL_API_URL`, the backend still answers from retrieval (fallback).
-- Local dataset generation has been removed; training uses public HF datasets.
-- The model server is **optional**: without `MODEL_API_URL`, the backend still answers from retrieval (fallback). Full grounded generation needs a model server with a ~7B model (heavy; CPU works but is slow).
+- Database is local PostgreSQL + pgvector (via `docker compose up` + `db/init.sql`). No cloud account needed. The rerank step is **optional**: without `MODEL_API_URL`, the backend still answers from retrieval (fallback).
 - Chat response includes `source` (`model` or `retriever`) so you can verify which path answered.
+- Training/fine-tuning is out of scope — generation and embeddings are API-first (OpenAI key). The optional `MODEL_API_URL` is only for a cross-encoder rerank service.

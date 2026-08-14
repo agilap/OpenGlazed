@@ -532,7 +532,7 @@ async function clusterEmbeddings(embeddings, k) {
   return embeddings.map(() => 0);
 }
 
-async function callGemini(prompt, { timeoutMs } = {}) {
+async function callLLM(prompt, { timeoutMs } = {}) {
   const response = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
     messages: [{ role: 'user', content: prompt }],
@@ -592,7 +592,7 @@ async function buildLevel1Summaries(storedChunks, businessId) {
 
   async function summarizeCluster(cluster) {
     try {
-      const content = await callGemini(clusterPrompt(cluster), { timeoutMs: 8000 });
+      const content = await callLLM(clusterPrompt(cluster), { timeoutMs: 8000 });
       return {
         clusterId: cluster.clusterId,
         chunks: cluster.chunks,
@@ -640,7 +640,7 @@ async function buildLevel1Summaries(storedChunks, businessId) {
     const summaryResult = summaryResults[summaryIndex];
     if (summaryResult.status !== 'fulfilled') {
       const failedClusterId = clusters[summaryIndex]?.clusterId;
-      console.warn(`[ingest] Gemini Level 1 failed for cluster ${failedClusterId}: ${summaryResult.reason?.message || summaryResult.reason}`);
+      console.warn(`[ingest] Level 1 summary failed for cluster ${failedClusterId}: ${summaryResult.reason?.message || summaryResult.reason}`);
       continue;
     }
 
@@ -683,7 +683,7 @@ async function buildLevel2Summary(level1Rows, businessId) {
     `SECTION SUMMARIES: ${level1Summaries}`,
   ].join('\n');
 
-  const content = await callGemini(prompt);
+  const content = await callLLM(prompt);
 
   let embedding = null;
   try {
@@ -720,7 +720,7 @@ async function extractAndSaveBusinessProfile(level2Summary, businessId) {
     `PROFILE: ${level2Summary}`,
   ].join('\n');
 
-  const raw = await callGemini(prompt);
+  const raw = await callLLM(prompt);
   const jsonText = raw
     .replace(/^```json\s*/i, '')
     .replace(/^```\s*/i, '')

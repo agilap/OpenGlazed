@@ -234,7 +234,7 @@ app.post('/api/chat/:businessId', async function (req, res) {
         });
         response  = gemEsc.response;
         escalated = true;
-        source    = 'gemini-escalation';
+        source    = 'model-escalation';
       } else {
         response  = genResult.response;
         escalated = false;
@@ -254,7 +254,7 @@ app.post('/api/chat/:businessId', async function (req, res) {
         });
 
         var evalTask = Promise.resolve(null);
-        if (!escalated && chunks.length > 0 && source === 'gemini') {
+        if (!escalated && chunks.length > 0 && source === 'model') {
           evalTask = evaluateAnswer({
             query:  message,
             answer: response,
@@ -362,7 +362,7 @@ app.post('/api/chat/message', async function (req, res) {
       raptorSummary: retrieval.raptorSummary,
     });
     response = gen.response;
-    source   = gen.escalated ? 'escalate' : 'gemini';
+    source   = gen.escalated ? 'escalate' : 'model';
   }
 
   await db.insertQuestion(session.business_id, session.id, message, response);

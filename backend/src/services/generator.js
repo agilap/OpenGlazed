@@ -26,7 +26,7 @@ function buildHistory(conversationHistory, businessName) {
     .join('\n');
 }
 
-async function callGemini(prompt) {
+async function callLLM(prompt) {
   const response = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
     messages: [{ role: 'user', content: prompt }],
@@ -36,7 +36,7 @@ async function callGemini(prompt) {
   return (response.choices[0].message.content || '').trim();
 }
 
-async function callPhi3Fallback(query, contextChunks) {
+async function callLLMFallback(query, contextChunks) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
 
@@ -69,7 +69,7 @@ async function callPhi3Fallback(query, contextChunks) {
     return {
       response: text,
       escalated: false,
-      source: 'phi3-fallback',
+      source: 'model-fallback',
     };
   } finally {
     clearTimeout(timeout);
@@ -118,7 +118,7 @@ async function generateAnswer({
   ].join('\n');
 
   try {
-    const text = await callGemini(prompt);
+    const text = await callLLM(prompt);
 
     if (/^\[ESCALATE\]/i.test(text)) {
       const reason = text.replace(/^\[ESCALATE\]\s*:\s*/i, '').trim();
@@ -126,18 +126,18 @@ async function generateAnswer({
         response: null,
         escalated: true,
         reason,
-        source: 'gemini',
+        source: 'model',
       };
     }
 
     return {
       response: text,
       escalated: false,
-      source: 'gemini',
+      source: 'model',
     };
-  } catch (_geminiError) {
+  } catch (_llmError) {
     try {
-      return await callPhi3Fallback(query, safeContextChunks);
+      return await callLLMFallback(query, safeContextChunks);
     } catch (_fallbackError) {
       const fallbackText = safeContextChunks[0]
         ? `${safeContextChunks[0].slice(0, 280)}...`
@@ -165,17 +165,17 @@ async function generateEscalationMessage({ query, missingInfo, businessName, bra
   ].join('\n');
 
   try {
-    const response = await callGemini(prompt);
+    const response = await callLLM(prompt);
     return {
       response,
       escalated: true,
-      source: 'gemini',
+      source: 'model',
     };
   } catch (_error) {
     return {
       response: "Great question — I don't have that detail right now. Leave your email and our team will follow up with everything you need!",
       escalated: true,
-      source: 'gemini',
+      source: 'model',
     };
   }
 }
@@ -189,7 +189,7 @@ async function generateQueryRewrite(rawQuery) {
   ].join('\n');
 
   try {
-    const rewritten = await callGemini(prompt);
+    const rewritten = await callLLM(prompt);
     return rewritten || rawQuery;
   } catch (_error) {
     return rawQuery;
@@ -213,7 +213,7 @@ async function extractLead(transcript) {
   ].join('\n');
 
   try {
-    const raw = await callGemini(prompt);
+    const raw = await callLLM(prompt);
     const jsonText = stripMarkdownFences(raw);
     return JSON.parse(jsonText);
   } catch (_error) {
@@ -237,7 +237,7 @@ async function evaluateAnswer({ query, answer, chunks }) {
   ].join('\n');
 
   try {
-    const raw = await callGemini(prompt);
+    const raw = await callLLM(prompt);
     const jsonText = stripMarkdownFences(raw);
     const parsed = JSON.parse(jsonText);
 
