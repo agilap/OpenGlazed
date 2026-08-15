@@ -308,10 +308,7 @@ export default function EmbeddableWidget({ businessId }) {
         }
 
         .gzd-header {
-          background:
-            radial-gradient(at 0% 0%, hsla(243, 98%, 71%, 1) 0, transparent 50%),
-            radial-gradient(at 100% 0%, hsla(225, 89%, 57%, 1) 0, transparent 50%),
-            #5254cc;
+          background: #5254cc;
           padding: 20px 20px 44px 20px;
           display: flex;
           justify-content: space-between;
@@ -399,7 +396,7 @@ export default function EmbeddableWidget({ businessId }) {
           width: 24px;
           height: 24px;
           border-radius: var(--gzd-radius-full);
-          background: linear-gradient(135deg, #6366f1, #8b5cf6);
+          background: #6366f1;
           color: #fff;
           display: inline-flex;
           align-items: center;
@@ -574,7 +571,7 @@ export default function EmbeddableWidget({ businessId }) {
 
         .gzd-gate button[type='submit'] {
           width: 100%;
-          background: linear-gradient(135deg, #6366f1, #8b5cf6);
+          background: #6366f1;
           color: #fff;
           border: none;
           border-radius: var(--gzd-radius-xl);
@@ -642,7 +639,7 @@ export default function EmbeddableWidget({ businessId }) {
           width: 38px;
           height: 38px;
           border-radius: var(--gzd-radius-full);
-          background: linear-gradient(135deg, #6366f1, #8b5cf6);
+          background: #6366f1;
           border: none;
           cursor: pointer;
           display: flex;
