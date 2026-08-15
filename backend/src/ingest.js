@@ -556,9 +556,64 @@ async function ingestNormalized(sections, { businessId, sourceType, sourceRef })
   }
 }
 
-// RAPTOR level-1 clustering. The old self-hosted model-server /cluster endpoint
-// is gone (API-first app). Fall back to a single flat cluster (label 0) so the
-// RAPTOR summary layer still works without a local clustering service.
+// RAPTOR level-1 clustering. Runs LOCAL k-means (no external service, no API
+// key) by default so the RAPTOR summary layer is real out of the box. If
+// MODEL_API_URL exposes a /cluster endpoint it is used as an override.
+function dot(a, b) {
+  let s = 0;
+  for (let i = 0; i < a.length; i += 1) s += a[i] * b[i];
+  return s;
+}
+function norm(a) {
+  return Math.sqrt(dot(a, a)) || 1;
+}
+function cosineDist(a, b) {
+  return 1 - dot(a, b) / (norm(a) * norm(b));
+}
+function kmeans(vectors, k, iterations = 12) {
+  const n = vectors.length;
+  const dim = vectors[0].length;
+  if (n <= k) return vectors.map((_, i) => i % k);
+
+  // k-means++ style seeding (deterministic-ish via spread picking)
+  const centroids = [vectors[Math.floor(Math.random() * n)].slice()];
+  while (centroids.length < k) {
+    let best = null;
+    let bestD = -1;
+    for (const v of vectors) {
+      const d = Math.min(...centroids.map((c) => cosineDist(v, c)));
+      if (d > bestD) { bestD = d; best = v; }
+    }
+    centroids.push(best.slice());
+  }
+
+  let labels = new Array(n).fill(0);
+  for (let it = 0; it < iterations; it += 1) {
+    // assign
+    for (let i = 0; i < n; i += 1) {
+      let best = 0;
+      let bestD = Infinity;
+      for (let c = 0; c < k; c += 1) {
+        const d = cosineDist(vectors[i], centroids[c]);
+        if (d < bestD) { bestD = d; best = c; }
+      }
+      labels[i] = best;
+    }
+    // update
+    const sums = Array.from({ length: k }, () => new Array(dim).fill(0));
+    const counts = new Array(k).fill(0);
+    for (let i = 0; i < n; i += 1) {
+      const c = labels[i];
+      counts[c] += 1;
+      for (let j = 0; j < dim; j += 1) sums[c][j] += vectors[i][j];
+    }
+    for (let c = 0; c < k; c += 1) {
+      if (counts[c] > 0) centroids[c] = sums[c].map((x) => x / counts[c]);
+    }
+  }
+  return labels;
+}
+
 async function clusterEmbeddings(embeddings, k) {
   if (!Array.isArray(embeddings) || embeddings.length === 0) return [];
   if (process.env.MODEL_API_URL) {
@@ -575,10 +630,10 @@ async function clusterEmbeddings(embeddings, k) {
         }
       }
     } catch (error) {
-      console.warn(`[ingest] cluster failed, falling back to flat: ${error.message}`);
+      console.warn(`[ingest] cluster override failed, using local k-means: ${error.message}`);
     }
   }
-  return embeddings.map(() => 0);
+  return kmeans(embeddings, k);
 }
 
 async function callLLM(prompt, { timeoutMs } = {}) {
