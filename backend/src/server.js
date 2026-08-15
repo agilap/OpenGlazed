@@ -24,6 +24,26 @@ const port = process.env.PORT || 3000;
 const allowedOrigin = process.env.FRONTEND_ORIGIN       || 'http://localhost:5173';
 const embedOrigin   = process.env.FRONTEND_EMBED_ORIGIN || allowedOrigin;
 
+// ── Admin auth ──────────────────────────────────────────────────
+// Protected endpoints (dashboard data, ingest, source ingestion, business
+// creation) require `Authorization: Bearer <ADMIN_TOKEN>`. If ADMIN_TOKEN is
+// unset we generate a random one at boot and log it, so the deployment is never
+// silently open. The public chat widget endpoints stay unauthenticated.
+let ADMIN_TOKEN = process.env.ADMIN_TOKEN;
+if (!ADMIN_TOKEN) {
+  ADMIN_TOKEN = require('crypto').randomBytes(24).toString('hex');
+  console.log('[auth] ADMIN_TOKEN not set — generated ephemeral token: ' + ADMIN_TOKEN);
+}
+
+function requireAdmin(req, res, next) {
+  const header = req.headers['authorization'] || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+  if (token && token === ADMIN_TOKEN) {
+    return next();
+  }
+  return res.status(401).json({ error: 'Unauthorized' });
+}
+
 app.use(cors({ origin: allowedOrigin }));
 app.use(express.json({ limit: '25mb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
@@ -73,7 +93,7 @@ app.use('/api/chat', injectionGuard);
 // BUSINESSES
 // =============================================================================
 
-app.post('/api/businesses', async function (req, res) {
+app.post('/api/businesses', requireAdmin, async function (req, res) {
   var name = req.body.name;
   var url  = req.body.url;
 
@@ -111,7 +131,7 @@ app.get('/api/businesses/:id', async function (req, res) {
   return res.json({ business: business, training: training });
 });
 
-app.get('/api/businesses/:id/dashboard', async function (req, res) {
+app.get('/api/businesses/:id/dashboard', requireAdmin, async function (req, res) {
   var businessId = Number(req.params.id);
 
   var business = await db.getBusinessById(businessId);
@@ -136,7 +156,7 @@ app.get('/api/businesses/:id/dashboard', async function (req, res) {
 // INGEST
 // =============================================================================
 
-app.post('/api/ingest/:businessId', async function (req, res) {
+app.post('/api/ingest/:businessId', requireAdmin, async function (req, res) {
   var businessId = req.params.businessId;
   var business = await db.getBusinessUrl(businessId);
   if (!business) return res.status(404).json({ error: 'Business not found' });
@@ -159,7 +179,7 @@ app.get('/api/ingest/:businessId/status', async function (req, res) {
 // ── Multi-source ingestion (md / paste / csv / json / sitemap; pdf/docx stubbed)
 // Body: { sourceType: 'markdown'|'paste'|'csv'|'json'|'sitemap'|'pdf'|'docx',
 //         text?: string, url?: string, filename?: string }
-app.post('/api/sources/:businessId', async function (req, res) {
+app.post('/api/sources/:businessId', requireAdmin, async function (req, res) {
   var businessId = Number(req.params.businessId);
   var business = await db.getBusinessById(businessId);
   if (!business) return res.status(404).json({ error: 'Business not found' });
@@ -486,7 +506,7 @@ app.post('/api/chat/:businessId/lead', async function (req, res) {
 });
 
 /* ── Legacy message endpoint (session-token) ────────────────────── */
-app.post('/api/chat/message', async function (req, res) {
+app.post('/api/chat/message', requireAdmin, async function (req, res) {
   var sessionToken = req.body.sessionToken;
   var message      = req.body.message;
 
@@ -534,7 +554,7 @@ app.post('/api/chat/message', async function (req, res) {
 // DASHBOARD
 // =============================================================================
 
-app.get('/api/dashboard/:businessId/stats', async function (req, res) {
+app.get('/api/dashboard/:businessId/stats', requireAdmin, async function (req, res) {
   try {
     res.json(await db.getDashboardStats(req.params.businessId));
   } catch (err) {
@@ -542,7 +562,7 @@ app.get('/api/dashboard/:businessId/stats', async function (req, res) {
   }
 });
 
-app.get('/api/dashboard/:businessId/transcripts', async function (req, res) {
+app.get('/api/dashboard/:businessId/transcripts', requireAdmin, async function (req, res) {
   try {
     res.json(await db.getTranscripts(req.params.businessId, req.query.sessionId || null));
   } catch (err) {
@@ -550,7 +570,7 @@ app.get('/api/dashboard/:businessId/transcripts', async function (req, res) {
   }
 });
 
-app.get('/api/dashboard/:businessId/sessions', async function (req, res) {
+app.get('/api/dashboard/:businessId/sessions', requireAdmin, async function (req, res) {
   try {
     res.json(await db.getSessions(req.params.businessId));
   } catch (err) {
@@ -558,7 +578,7 @@ app.get('/api/dashboard/:businessId/sessions', async function (req, res) {
   }
 });
 
-app.get('/api/dashboard/:businessId/leads', async function (req, res) {
+app.get('/api/dashboard/:businessId/leads', requireAdmin, async function (req, res) {
   try {
     res.json(await db.getLeads(req.params.businessId, {
       limit:    Number(req.query.limit) || 100,
@@ -569,7 +589,7 @@ app.get('/api/dashboard/:businessId/leads', async function (req, res) {
   }
 });
 
-app.get('/api/dashboard/:businessId/questions', async function (req, res) {
+app.get('/api/dashboard/:businessId/questions', requireAdmin, async function (req, res) {
   try {
     res.json(await db.getTopQuestions(req.params.businessId, Number(req.query.days) || 7));
   } catch (err) {

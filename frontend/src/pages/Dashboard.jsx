@@ -30,6 +30,23 @@ export default function Dashboard() {
   const [copied, setCopied] = useState(false);
   const [reingesting, setReingesting] = useState(false);
   const [error, setError] = useState(null);
+  const [adminToken, setAdminToken] = useState(() => localStorage.getItem('glazed_admin_token') || '');
+  const [needToken, setNeedToken] = useState(false);
+
+  const saveToken = (value) => {
+    setAdminToken(value);
+    if (value) localStorage.setItem('glazed_admin_token', value);
+    else localStorage.removeItem('glazed_admin_token');
+  };
+
+  // Wraps fetch with the admin bearer token; flags needToken on 401.
+  async function authedFetch(url, options = {}) {
+    const headers = { ...(options.headers || {}) };
+    if (adminToken) headers['Authorization'] = `Bearer ${adminToken}`;
+    const response = await fetch(url, { ...options, headers });
+    if (response.status === 401) setNeedToken(true);
+    return response;
+  }
 
   const businessId = id;
   const progressValue = Math.max(0, Math.min(100, Number(ingestStatus.ingest_progress) || 0));
@@ -39,7 +56,7 @@ export default function Dashboard() {
   );
 
   async function fetchDashboard() {
-    const response = await fetch(`${API_BASE}/api/businesses/${businessId}/dashboard`);
+    const response = await authedFetch(`${API_BASE}/api/businesses/${businessId}/dashboard`);
     const json = await response.json();
     if (!response.ok || json.error) {
       throw new Error(json.error || 'Failed to load dashboard');
@@ -48,7 +65,7 @@ export default function Dashboard() {
   }
 
   async function fetchStats() {
-    const response = await fetch(`${API_BASE}/api/dashboard/${businessId}/stats`);
+    const response = await authedFetch(`${API_BASE}/api/dashboard/${businessId}/stats`);
     const json = await response.json();
     if (!response.ok || json.error) {
       throw new Error(json.error || 'Failed to load stats');
@@ -73,10 +90,10 @@ export default function Dashboard() {
   }
 
   async function fetchLeads() {
-    let response = await fetch(`${API_BASE}/api/leads/${businessId}`);
+    let response = await authedFetch(`${API_BASE}/api/leads/${businessId}`);
 
     if (!response.ok) {
-      response = await fetch(`${API_BASE}/api/dashboard/${businessId}/leads`);
+      response = await authedFetch(`${API_BASE}/api/dashboard/${businessId}/leads`);
     }
 
     const json = await response.json();
@@ -125,13 +142,21 @@ export default function Dashboard() {
     return () => clearInterval(id);
   }, [businessId]);
 
+  // When the admin token is present (typed or restored), (re)load the dashboard.
+  useEffect(() => {
+    if (adminToken && businessId) {
+      reload();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminToken]);
+
   async function openTranscript(lead) {
     setSelectedLead(lead);
     setTranscript([]);
     setTranscriptLoading(true);
 
     try {
-      const response = await fetch(
+      const response = await authedFetch(
         `${API_BASE}/api/dashboard/${businessId}/transcripts?sessionId=${encodeURIComponent(lead.session_id || '')}`
       );
       const json = await response.json();
@@ -165,14 +190,14 @@ export default function Dashboard() {
     setReingesting(true);
 
     try {
-      let response = await fetch(`${API_BASE}/api/ingest`, {
+      let response = await authedFetch(`${API_BASE}/api/ingest`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ businessId, url: data.business.url }),
       });
 
       if (!response.ok) {
-        response = await fetch(`${API_BASE}/api/ingest/${businessId}`, { method: 'POST' });
+        response = await authedFetch(`${API_BASE}/api/ingest/${businessId}`, { method: 'POST' });
       }
 
       const json = await response.json();
@@ -185,6 +210,16 @@ export default function Dashboard() {
       setError(err.message);
     } finally {
       setReingesting(false);
+    }
+  }
+
+  async function reload() {
+    setError(null);
+    setNeedToken(false);
+    try {
+      await Promise.all([fetchDashboard(), fetchStats(), fetchIngestStatus(), fetchLeads()]);
+    } catch (err) {
+      setError(err.message);
     }
   }
 
@@ -249,6 +284,20 @@ export default function Dashboard() {
             </button>
           </div>
         </header>
+
+        {(!adminToken || needToken) && (
+          <section className="dashboard-token-banner">
+            <span>This dashboard is protected. Paste your ADMIN_TOKEN:</span>
+            <input
+              type="password"
+              value={adminToken}
+              placeholder="ADMIN_TOKEN"
+              onChange={(e) => { saveToken(e.target.value); setNeedToken(false); }}
+              className="dashboard-token-input"
+            />
+            <button type="button" className="dashboard-action" onClick={() => reload()}>Load</button>
+          </section>
+        )}
 
         <section className="dashboard-stats-grid">
           <article className="dashboard-stat-card">

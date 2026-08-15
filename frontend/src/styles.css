@@ -533,6 +533,34 @@ textarea {
   font-size: 0.82rem;
 }
 
+.dashboard-token-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  background: color-mix(in srgb, #f59e0b 12%, var(--surface-container));
+  border: 1px solid #fcd34d;
+  border-radius: var(--radius-lg);
+  padding: 12px 16px;
+  font-size: 0.82rem;
+  color: var(--on-surface);
+}
+
+.dashboard-token-input {
+  flex: 1;
+  min-width: 220px;
+  background: var(--surface);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 0.82rem;
+  outline: none;
+}
+
+.dashboard-token-input:focus {
+  border-color: var(--primary, #6366f1);
+}
+
 .dashboard-ingest-track {
   background: var(--surface-container-high);
   height: 3px;

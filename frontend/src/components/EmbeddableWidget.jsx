@@ -68,7 +68,7 @@ export default function EmbeddableWidget({ businessId }) {
 
     async function loadBusinessName() {
       try {
-        const response = await fetch(`${API_BASE}/api/businesses/${businessId}/dashboard`);
+        const response = await fetch(`${API_BASE}/api/businesses/${businessId}`);
         const data = await response.json();
         if (!active || !response.ok || data?.error) {
           return;
