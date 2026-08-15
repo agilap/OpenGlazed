@@ -43,8 +43,6 @@ const PRIORITY_URL_PARTS = [
   'features',
 ];
 
-const MAX_CHARS = 600;
-const OVERLAP_CHARS = 80;
 const MIN_CHARS = 80;
 
 function sleep(ms) {
@@ -83,119 +81,103 @@ function jaccardSimilarity(a, b) {
   return union === 0 ? 0 : intersection / union;
 }
 
-function splitHard(text, maxLength) {
-  const out = [];
-  for (let i = 0; i < text.length; i += maxLength) {
-    out.push(text.slice(i, i + maxLength));
-  }
-  return out;
+// Semantic chunking.
+// Group a document into paragraph-bounded chunks that stay within a token
+// budget, and prefix each chunk with a short heading breadcrumb so retrieved
+// passages carry their section context. This beats the old recursive
+// char-split + naive tail-overlap, which shattered sentences and lost context.
+
+const CHUNK_TOKEN_BUDGET = 320; // ~1280 chars; keeps chunks focused + retrievable
+const TOKENS_PER_CHAR = 0.25; // rough heuristic: 4 chars ≈ 1 token
+
+function estimateTokens(text) {
+  return Math.ceil(text.length * TOKENS_PER_CHAR);
 }
 
-function splitByDelimiter(text, delimiter) {
-  if (!text.includes(delimiter)) {
-    return [text];
-  }
+// docs: [{ content, url, heading? }] -> level-0 chunks
+function buildSemanticChunks(docs, businessId) {
+  const chunks = [];
 
-  const parts = text.split(delimiter);
-  const merged = [];
-  let current = '';
+  for (const doc of docs) {
+    const url = doc.url || null;
+    const breadcrumb = doc.heading ? `## ${doc.heading}\n\n` : '';
+    const paragraphs = (doc.content || '')
+      .split(/\n{2,}/)
+      .map((p) => normalizeWhitespace(p))
+      .filter(Boolean);
 
-  for (let i = 0; i < parts.length; i += 1) {
-    const piece = i === 0 ? parts[i] : `${delimiter}${parts[i]}`;
-    if (!piece) {
-      continue;
-    }
+    if (paragraphs.length === 0) continue;
 
-    const candidate = current ? `${current}${piece}` : piece;
-    if (candidate.length <= MAX_CHARS) {
-      current = candidate;
-      continue;
-    }
+    let current = '';
+    let currentTokens = 0;
 
-    if (current) {
-      merged.push(current);
-      current = piece;
-    } else {
-      merged.push(piece);
+    const flush = () => {
+      const content = normalizeWhitespace(breadcrumb + current).trim();
+      if (content.length >= MIN_CHARS) {
+        chunks.push({
+          content,
+          level: 0,
+          source_url: url,
+          business_id: businessId,
+          token_count: estimateTokens(content),
+          heading: doc.heading || null,
+        });
+      }
       current = '';
-    }
-  }
+      currentTokens = 0;
+    };
 
-  if (current) {
-    merged.push(current);
-  }
+    for (const para of paragraphs) {
+      const paraTokens = estimateTokens(para);
 
-  return merged;
-}
+      // A single paragraph over budget gets its own (possibly oversized) chunk.
+      if (currentTokens + paraTokens > CHUNK_TOKEN_BUDGET && current) {
+        flush();
+      }
 
-function splitRecursive(text) {
-  const clean = normalizeWhitespace(text);
-  if (clean.length <= MAX_CHARS) {
-    return [clean];
-  }
-
-  const byParagraph = splitByDelimiter(clean, '\n\n');
-  if (byParagraph.every((piece) => piece.length <= MAX_CHARS)) {
-    return byParagraph;
-  }
-
-  let out = [];
-  for (const piece of byParagraph) {
-    if (piece.length <= MAX_CHARS) {
-      out.push(piece);
-      continue;
-    }
-
-    const byLine = splitByDelimiter(piece, '\n');
-    if (byLine.every((line) => line.length <= MAX_CHARS)) {
-      out = out.concat(byLine);
-      continue;
-    }
-
-    for (const linePiece of byLine) {
-      if (linePiece.length <= MAX_CHARS) {
-        out.push(linePiece);
+      if (paraTokens > CHUNK_TOKEN_BUDGET) {
+        // Split the long paragraph on sentence boundaries, then budget those.
+        const sentences = para.match(/[^.!?]+[.!?]*\s*/g) || [para];
+        let buf = '';
+        let bufTokens = 0;
+        for (const sentence of sentences) {
+          const sTokens = estimateTokens(sentence);
+          if (bufTokens + sTokens > CHUNK_TOKEN_BUDGET && buf) {
+            chunks.push({
+              content: normalizeWhitespace(breadcrumb + buf).trim(),
+              level: 0,
+              source_url: url,
+              business_id: businessId,
+              token_count: estimateTokens(buf),
+              heading: doc.heading || null,
+            });
+            buf = '';
+            bufTokens = 0;
+          }
+          buf += sentence;
+          bufTokens += sTokens;
+        }
+        if (buf.trim().length >= MIN_CHARS) {
+          chunks.push({
+            content: normalizeWhitespace(breadcrumb + buf).trim(),
+            level: 0,
+            source_url: url,
+            business_id: businessId,
+            token_count: estimateTokens(buf),
+            heading: doc.heading || null,
+          });
+        }
         continue;
       }
 
-      const bySentence = splitByDelimiter(linePiece, '. ');
-      if (bySentence.every((sentence) => sentence.length <= MAX_CHARS)) {
-        out = out.concat(bySentence);
-      } else {
-        for (const sentencePiece of bySentence) {
-          if (sentencePiece.length <= MAX_CHARS) {
-            out.push(sentencePiece);
-          } else {
-            out = out.concat(splitHard(sentencePiece, MAX_CHARS));
-          }
-        }
-      }
+      current += (current ? '\n\n' : '') + para;
+      currentTokens += paraTokens;
     }
+
+    if (current) flush();
   }
 
-  return out;
-}
-
-function withOverlap(chunks) {
-  const out = [];
-
-  for (let i = 0; i < chunks.length; i += 1) {
-    const chunk = chunks[i].trim();
-    if (!chunk) {
-      continue;
-    }
-
-    if (i === 0) {
-      out.push(chunk);
-      continue;
-    }
-
-    const previous = out[out.length - 1] || '';
-    const tail = previous.slice(-OVERLAP_CHARS);
-    out.push(`${tail}${chunk}`);
-  }
-
-  return out;
+  return dedupeByJaccard(chunks);
 }
 
 function dedupeByJaccard(chunks) {
@@ -433,30 +415,10 @@ async function scrapeSite(startUrl, maxPages = 50) {
   return pages;
 }
 
-function buildLevel0Chunks(pages, businessId) {
-  const chunks = [];
-
-  for (const page of pages) {
-    const recursiveChunks = splitRecursive(page.content);
-    const overlapped = withOverlap(recursiveChunks);
-
-    for (const text of overlapped) {
-      const content = normalizeWhitespace(text);
-      if (content.length < MIN_CHARS) {
-        continue;
-      }
-
-      chunks.push({
-        content,
-        level: 0,
-        source_url: page.url,
-        business_id: businessId,
-        token_count: Math.ceil(content.length / 4),
-      });
-    }
-  }
-
-  return dedupeByJaccard(chunks);
+// Legacy alias kept for the two call sites; new code should call
+// buildSemanticChunks directly with [{ content, url, heading }].
+function buildLevel0Chunks(docs, businessId) {
+  return buildSemanticChunks(docs, businessId);
 }
 
 async function embedTextsLocal(texts) {
@@ -528,8 +490,8 @@ async function ingestNormalized(sections, { businessId, sourceType, sourceRef })
       throw new Error('No usable content extracted from source');
     }
 
-    const fakePages = sections.map((s) => ({ url: s.url || sourceRef, content: s.content }));
-    const level0Chunks = buildLevel0Chunks(fakePages, businessId);
+    const fakePages = sections.map((s) => ({ url: s.url || sourceRef, content: s.content, heading: s.heading || null }));
+    const level0Chunks = buildSemanticChunks(fakePages, businessId);
     await updateIngestProgress(businessId, 25);
 
     await attachChunkEmbeddings(level0Chunks);
@@ -849,7 +811,10 @@ async function runIngest(businessId, url) {
       throw new Error('No usable pages found during scrape');
     }
 
-    const level0Chunks = buildLevel0Chunks(pages, businessId);
+    const level0Chunks = buildSemanticChunks(
+      pages.map((p) => ({ url: p.url, content: p.content, heading: p.heading || null })),
+      businessId
+    );
     await updateIngestProgress(businessId, 25);
 
     await attachChunkEmbeddings(level0Chunks);
