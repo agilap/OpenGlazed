@@ -1,8 +1,10 @@
 # Glazed — fully local stack (no external accounts required)
 #
-#   docker compose up -d        # starts Postgres + pgvector on :5432
-#   cp backend/.env.example backend/.env   # then set DATABASE_URL below
-#   npm run dev                 # backend :3000 + frontend :5173
+#   docker compose up -d        # Postgres + pgvector + Ollama + API on :3000
+#   cp backend/.env.example backend/.env   # set DATABASE_URL + ADMIN_TOKEN
+#   # pull local models once:
+#   docker exec -it glazed-ollama ollama pull llama3.1
+#   docker exec -it glazed-ollama ollama pull nomic-embed-text
 #
 # The init script (db/init.sql) creates the schema + retrieval functions
 # automatically on first boot if they don't exist yet.
@@ -25,11 +27,9 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    networks: [glazed-net]
 
   # Local LLM + embeddings (OpenAI-compatible /v1 API). No API key needed.
-  # Pull the default models after first boot:
-  #   docker exec -it glazed-ollama ollama pull llama3.1
-  #   docker exec -it glazed-ollama ollama pull nomic-embed-text
   ollama:
     image: ollama/ollama:latest
     container_name: glazed-ollama
@@ -42,6 +42,32 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks: [glazed-net]
+
+  # API server (built from backend/Dockerfile)
+  app:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: glazed-api
+    # Pull env from a local .env if present; otherwise fall back to defaults.
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://glazed:glazed@db:5432/glazed}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434/v1}
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [glazed-net]
+    restart: unless-stopped
+
+networks:
+  glazed-net:
+    driver: bridge
 
 volumes:
   glazed_pgdata:
