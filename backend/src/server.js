@@ -14,7 +14,8 @@ const {
 } = require('./services/generator');
 const { retrieve }  = require('./services/retriever');
 const db            = require('./db');
-const { runIngest } = require('./ingest');
+const { runIngest, ingestNormalized } = require('./ingest');
+const { ingestSource, SUPPORTED } = require('./sources');
 
 const app  = express();
 const port = process.env.PORT || 3000;
@@ -23,7 +24,7 @@ const allowedOrigin = process.env.FRONTEND_ORIGIN       || 'http://localhost:517
 const embedOrigin   = process.env.FRONTEND_EMBED_ORIGIN || allowedOrigin;
 
 app.use(cors({ origin: allowedOrigin }));
-app.use(express.json());
+app.use(express.json({ limit: '25mb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -152,6 +153,28 @@ app.get('/api/ingest/:businessId/status', async function (req, res) {
     status:          data.ingest_status  || 'unknown',
     ingest_progress: data.ingest_progress || 0,
   });
+});
+
+// ── Multi-source ingestion (md / paste / csv / json / sitemap; pdf/docx stubbed)
+// Body: { sourceType: 'markdown'|'paste'|'csv'|'json'|'sitemap'|'pdf'|'docx',
+//         text?: string, url?: string, filename?: string }
+app.post('/api/sources/:businessId', async function (req, res) {
+  var businessId = Number(req.params.businessId);
+  var business = await db.getBusinessById(businessId);
+  if (!business) return res.status(404).json({ error: 'Business not found' });
+
+  var { sourceType, text, url, filename } = req.body || {};
+  if (!SUPPORTED.includes(sourceType)) {
+    return res.status(400).json({ error: 'Unsupported sourceType', supported: SUPPORTED });
+  }
+
+  res.json({ status: 'started', message: 'Source ingest triggered' });
+
+  ingestSource(businessId, sourceType, { text, url, filename })
+    .then((r) => console.log('[sources]', sourceType, '->', r))
+    .catch(function (err) {
+      console.error('[sources] ingest failed for', businessId, sourceType, err.message);
+    });
 });
 
 // =============================================================================
@@ -422,6 +445,13 @@ app.get('/api/dashboard/:businessId/questions', async function (req, res) {
 // =============================================================================
 
 app.get('/health', function (_req, res) { res.json({ ok: true }); });
+
+// Align vector schema to the configured embedding dim (local models may be
+// 768/1024 instead of 1536). No-op when already matched.
+const { embed: embedCfg } = require('./services/modelConfig');
+db.ensureSchema(embedCfg.dim).catch(function (err) {
+  console.error('[db] ensureSchema failed:', err.message);
+});
 
 app.listen(port, function () {
   console.log('glazed server running on http://localhost:' + port);

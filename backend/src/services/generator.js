@@ -1,9 +1,8 @@
 'use strict';
 
-const OpenAI = require('openai');
+const { chatComplete } = require('./llm');
 
 const MODEL_URL = process.env.MODEL_API_URL || 'http://localhost:8000';
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 function stripMarkdownFences(text) {
   return (text || '')
@@ -27,13 +26,7 @@ function buildHistory(conversationHistory, businessName) {
 }
 
 async function callLLM(prompt) {
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
-    messages: [{ role: 'user', content: prompt }],
-    temperature: 0.3,
-    max_tokens: 1000,
-  });
-  return (response.choices[0].message.content || '').trim();
+  return chatComplete(prompt);
 }
 
 async function callLLMFallback(query, contextChunks) {

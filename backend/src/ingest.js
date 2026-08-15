@@ -1,19 +1,20 @@
 'use strict';
 
 const cheerio = require('cheerio');
-const OpenAI = require('openai');
 const {
   updateClientStatus,
   updateIngestProgress,
   deleteChunksByBusiness,
+  deleteChunksBySource,
+  getAllChunks,
   insertChunks,
   deleteSummaries,
   insertSummaries,
   updateBusiness,
 } = require('./db');
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const { embedTexts } = require('./services/embeddings');
+const { chatComplete } = require('./services/llm');
 
 const SKIP_URL_PARTS = [
   'careers',
@@ -483,8 +484,15 @@ async function attachChunkEmbeddings(chunks) {
 
   return chunks;
 }
-async function storeLevel0Chunks(chunks, businessId) {
-  await deleteChunksByBusiness(businessId);
+async function storeLevel0Chunks(chunks, businessId, sourceRef = null) {
+  // Backwards-compatible: when no sourceRef is given (legacy full re-ingest),
+  // wipe the whole business. When sourceRef is set, only that source's chunks
+  // are replaced so other sources survive.
+  if (sourceRef) {
+    await deleteChunksBySource(businessId, sourceRef);
+  } else {
+    await deleteChunksByBusiness(businessId);
+  }
 
   const inserted = [];
   const batchSize = 100;
@@ -494,6 +502,7 @@ async function storeLevel0Chunks(chunks, businessId) {
       business_id: businessId,
       chunk_text: chunk.content,
       source_url: chunk.source_url,
+      source_ref: sourceRef,
       chunk_index: i + idx,
       level: 0,
       token_count: chunk.token_count,
@@ -505,6 +514,46 @@ async function storeLevel0Chunks(chunks, businessId) {
   }
 
   return inserted;
+}
+
+// Source-agnostic ingestion: adapters emit canonical sections
+// [{heading, content, url}], we chunk/embed/store + rebuild RAPTOR.
+// Used by the multi-source feature (backend/src/sources).
+async function ingestNormalized(sections, { businessId, sourceType, sourceRef }) {
+  try {
+    await updateClientStatus(businessId, 'ingesting');
+    await updateIngestProgress(businessId, 10);
+
+    if (!sections.length) {
+      throw new Error('No usable content extracted from source');
+    }
+
+    const fakePages = sections.map((s) => ({ url: s.url || sourceRef, content: s.content }));
+    const level0Chunks = buildLevel0Chunks(fakePages, businessId);
+    await updateIngestProgress(businessId, 25);
+
+    await attachChunkEmbeddings(level0Chunks);
+    await updateIngestProgress(businessId, 40);
+
+    const storedChunks = await storeLevel0Chunks(level0Chunks, businessId, sourceRef);
+    await updateIngestProgress(businessId, 55);
+
+    // RAPTOR is rebuilt across ALL sources for this business (hybrid retriever
+    // needs every chunk in the index), not just the one just added.
+    const allChunks = await getAllChunks(businessId);
+    const level1Rows = await buildLevel1Summaries(allChunks, businessId);
+    await updateIngestProgress(businessId, 70);
+
+    const level2Summary = await buildLevel2Summary(level1Rows, businessId);
+    await extractAndSaveBusinessProfile(level2Summary, businessId);
+
+    await updateClientStatus(businessId, 'active');
+    await updateIngestProgress(businessId, 100);
+    return { chunks: storedChunks.length };
+  } catch (error) {
+    await updateClientStatus(businessId, 'error');
+    throw error;
+  }
 }
 
 // RAPTOR level-1 clustering. The old self-hosted model-server /cluster endpoint
@@ -533,13 +582,7 @@ async function clusterEmbeddings(embeddings, k) {
 }
 
 async function callLLM(prompt, { timeoutMs } = {}) {
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
-    messages: [{ role: 'user', content: prompt }],
-    temperature: 0.3,
-    max_tokens: 1000,
-  });
-  return (response.choices[0].message.content || '').trim();
+  return chatComplete(prompt);
 }
 
 async function buildLevel1Summaries(storedChunks, businessId) {
@@ -757,10 +800,11 @@ async function runIngest(businessId, url) {
     await attachChunkEmbeddings(level0Chunks);
     await updateIngestProgress(businessId, 40);
 
-    const storedChunks = await storeLevel0Chunks(level0Chunks, businessId);
+    const storedChunks = await storeLevel0Chunks(level0Chunks, businessId, 'url:' + url);
     await updateIngestProgress(businessId, 55);
 
-    const level1Rows = await buildLevel1Summaries(storedChunks, businessId);
+    const allChunks = await getAllChunks(businessId);
+    const level1Rows = await buildLevel1Summaries(allChunks, businessId);
     await updateIngestProgress(businessId, 70);
 
     const level2Summary = await buildLevel2Summary(level1Rows, businessId);
@@ -775,5 +819,5 @@ async function runIngest(businessId, url) {
   }
 }
 
-module.exports = { runIngest };
+module.exports = { runIngest, ingestNormalized };
 

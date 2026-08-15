@@ -26,5 +26,23 @@ services:
       timeout: 5s
       retries: 10
 
+  # Local LLM + embeddings (OpenAI-compatible /v1 API). No API key needed.
+  # Pull the default models after first boot:
+  #   docker exec -it glazed-ollama ollama pull llama3.1
+  #   docker exec -it glazed-ollama ollama pull nomic-embed-text
+  ollama:
+    image: ollama/ollama:latest
+    container_name: glazed-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - glazed_ollama:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || true"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   glazed_pgdata:
+  glazed_ollama:

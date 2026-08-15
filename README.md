@@ -17,7 +17,7 @@ Business-specific website chat assistant with a **hybrid retrieval pipeline** (d
 
 - **Backend:** Node.js / Express + node-postgres (`pg`)
 - **Frontend:** React 19 + React Router + Vite
-- **Generation + embeddings:** OpenAI API (API key)
+- Generation + retrieval default to **local Ollama** (no API key); OpenAI-compatible providers (LocalAI, LM Studio, OpenAI) selectable via env
 - **Rerank (optional):** cross-encoder via `MODEL_API_URL` if set; otherwise skipped
 - **Database:** PostgreSQL + pgvector (runs locally via Docker — no cloud account needed)
 
@@ -71,8 +71,10 @@ Backend env file:
 
 ```bash
 cp backend/.env.example backend/.env
-# DATABASE_URL is pre-set to the local Docker Postgres; set OPENAI_API_KEY for generation
-# Optional: MODEL_API_URL and FRONTEND_EMBED_ORIGIN
+# DATABASE_URL is pre-set to the local Docker Postgres.
+# Models run LOCALLY on Ollama by default (see docker-compose.yml) — no API key.
+# To use OpenAI instead: set LLM_PROVIDER=openai, EMBED_PROVIDER=openai,
+# OPENAI_API_KEY, and optionally OPENAI_BASE_URL.
 ```
 
 Frontend env file (optional — Vite proxies `/api` to backend in dev):
@@ -95,18 +97,29 @@ App URLs:
 - Backend API: `http://localhost:3000`
 - Iframe widget route: `http://localhost:5173/embed/:businessId`
 
-## Environment: API keys
+## Environment: models
 
-Generation and embeddings are API-first — no self-hosted model server.
+OpenGlazed is **provider-agnostic** — it talks the OpenAI-compatible `/v1` API,
+so it runs fully local with **no API key** via Ollama (bundled in
+`docker-compose.yml`). Chat + embeddings default to local models.
 
 ```bash
-# backend/.env — set your OpenAI key
-OPENAI_API_KEY=sk-...            # used for chat generation + embeddings
-# optional rerank: if you run a cross-encoder rerank service, point to it:
-# MODEL_API_URL=http://localhost:8000
+# Default (local, no key):
+#   ollama pull llama3.1 && ollama pull nomic-embed-text
+LLM_PROVIDER=ollama
+OLLAMA_CHAT_MODEL=llama3.1
+EMBED_PROVIDER=ollama
+OLLAMA_EMBED_MODEL=nomic-embed-text   # 768-dim
+
+# Or use OpenAI (set a key):
+# LLM_PROVIDER=openai
+# EMBED_PROVIDER=openai
+# OPENAI_API_KEY=sk-...
 ```
 
-`text-embedding-3-small` (1536-dim) is used for embeddings; `gpt-4o-mini` for answers.
+The vector schema auto-migrates to your embedding dim (`embedCfg.dim`), so
+switching models (768 / 1024 / 1536 / 3072) needs no manual SQL.
+
 Rerank is skipped unless `MODEL_API_URL` is set.
 
 ## Product flow

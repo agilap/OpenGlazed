@@ -217,15 +217,39 @@ async function deleteChunksByBusiness(businessId) {
   await pool.query('DELETE FROM chunks WHERE business_id = $1', [businessId]);
 }
 
+// All level-0 chunks for a business (used to rebuild RAPTOR across sources).
+async function getAllChunks(businessId) {
+  const { rows } = await pool.query(
+    'SELECT id, chunk_text AS content, source_url, embedding, token_count FROM chunks WHERE business_id = $1 AND level = 0',
+    [businessId]
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    content: r.content,
+    source_url: r.source_url,
+    embedding: r.embedding,
+    token_count: r.token_count,
+  }));
+}
+
+// Source-scoped delete: remove only chunks belonging to a specific source so
+// re-ingesting one source (e.g. a re-uploaded .md) never wipes other sources.
+async function deleteChunksBySource(businessId, sourceRef) {
+  await pool.query(
+    'DELETE FROM chunks WHERE business_id = $1 AND source_ref = $2',
+    [businessId, sourceRef]
+  );
+}
+
 async function insertChunks(payload) {
   // payload: array of {business_id, chunk_text, source_url, chunk_index, level, token_count, embedding}
   const inserted = [];
   for (const c of payload) {
     const emb = Array.isArray(c.embedding) ? `[${c.embedding.join(',')}]` : c.embedding ?? null;
     const { rows } = await pool.query(
-      `INSERT INTO chunks (business_id, chunk_text, source_url, chunk_index, level, token_count, embedding)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-      [c.business_id, c.chunk_text, c.source_url, c.chunk_index, c.level, c.token_count, emb]
+      `INSERT INTO chunks (business_id, chunk_text, source_url, source_ref, chunk_index, level, token_count, embedding)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+      [c.business_id, c.chunk_text, c.source_url, c.source_ref ?? null, c.chunk_index, c.level, c.token_count, emb]
     );
     inserted.push({ ...c, id: rows[0].id });
   }
@@ -356,6 +380,8 @@ module.exports = {
   getLatestTrainingJob,
   getBusinessStatusCols,
   deleteChunksByBusiness,
+  deleteChunksBySource,
+  getAllChunks,
   insertChunks,
   deleteSummaries,
   insertSummaries,
@@ -372,4 +398,52 @@ module.exports = {
   plainFtsSearch,
   // expose for ad-hoc scripts
   query: (text, params) => pool.query(text, params),
+  ensureSchema,
 };
+
+// Align the vector columns + retrieval functions to the configured embedding
+// dim. Local models (e.g. nomic-embed-text = 768) don't fit vector(1536).
+// Idempotent: only rebuilds when the current dim differs. Rebuilds the two
+// hnsw indexes (which lock to a fixed dim) + the match/match_summaries fns.
+async function ensureSchema(dim = 1536) {
+  const DIM = Number(dim) || 1536;
+  const current = await pool.query(
+    "SELECT atttypmod AS m FROM pg_attribute WHERE attrelid = 'chunks'::regclass AND attname = 'embedding'"
+  );
+  const curDim = current.rows[0] && current.rows[0].m > 0 ? current.rows[0].m : 1536;
+  if (curDim === DIM) return; // already aligned — no-op
+
+  console.log(`[db] migrating vector dim ${curDim} -> ${DIM}`);
+  await pool.query(`ALTER TABLE chunks ALTER COLUMN embedding TYPE vector(${DIM});`);
+  await pool.query(`ALTER TABLE summaries ALTER COLUMN embedding TYPE vector(${DIM});`);
+  await pool.query('DROP INDEX IF EXISTS chunks_embedding_idx;');
+  await pool.query('DROP INDEX IF EXISTS summaries_embedding_idx;');
+  await pool.query(`CREATE INDEX chunks_embedding_idx ON chunks USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);`);
+  await pool.query(`CREATE INDEX summaries_embedding_idx ON summaries USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);`);
+  await pool.query('DROP FUNCTION IF EXISTS match_chunks(vector, bigint, int, int);');
+  await pool.query('DROP FUNCTION IF EXISTS match_summaries(vector, bigint, int, int);');
+
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION match_chunks(
+      query_embedding vector(${DIM}), p_business_id bigint, p_level int DEFAULT 0, match_count int DEFAULT 20
+    ) RETURNS TABLE (id bigint, content text, level int, source_url text, cluster_id int, similarity float)
+    LANGUAGE plpgsql AS $$
+    BEGIN
+      RETURN QUERY SELECT c.id, c.chunk_text AS content, c.level, c.source_url, c.cluster_id,
+        1 - (c.embedding <=> query_embedding) AS similarity
+      FROM chunks c WHERE c.business_id = p_business_id AND c.level = p_level AND c.embedding IS NOT NULL
+      ORDER BY c.embedding <=> query_embedding LIMIT match_count;
+    END; $$;`);
+
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION match_summaries(
+      query_embedding vector(${DIM}), p_business_id bigint, p_level int, match_count int DEFAULT 5
+    ) RETURNS TABLE (id bigint, content text, level int, cluster_id int, similarity float)
+    LANGUAGE plpgsql AS $$
+    BEGIN
+      RETURN QUERY SELECT s.id, s.content, s.level, s.cluster_id,
+        1 - (s.embedding <=> query_embedding) AS similarity
+      FROM summaries s WHERE s.business_id = p_business_id AND s.level = p_level AND s.embedding IS NOT NULL
+      ORDER BY s.embedding <=> query_embedding LIMIT match_count;
+    END; $$;`);
+}
