@@ -265,7 +265,30 @@ app.post('/api/chat/:businessId', async function (req, res) {
       }
     }
 
-    res.json({ response: response, escalated: escalated, source: source, confidence: confidence, sessionId: sessionId });
+    // Build citations from the retrieved (reranked) chunks so the widget can
+    // show which passages backed the answer. Deduped by source, capped at 3.
+    var citations = [];
+    var seenSources = new Set();
+    for (var ci = 0; ci < chunks.length && citations.length < 3; ci += 1) {
+      var ch = chunks[ci];
+      var src = ch.source_url || (ch.level === 2 ? 'business summary' : 'knowledge base');
+      if (seenSources.has(src)) continue;
+      seenSources.add(src);
+      citations.push({
+        content: (ch.content || '').slice(0, 240),
+        source: src,
+        level: ch.level,
+      });
+    }
+
+    res.json({
+      response: response,
+      escalated: escalated,
+      source: source,
+      confidence: confidence,
+      sessionId: sessionId,
+      citations: citations,
+    });
 
     setImmediate(async function () {
       try {

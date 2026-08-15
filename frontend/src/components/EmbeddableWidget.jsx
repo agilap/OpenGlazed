@@ -15,6 +15,23 @@ function TypingIndicator() {
   );
 }
 
+function CitationList({ citations }) {
+  if (!Array.isArray(citations) || citations.length === 0) return null;
+  return (
+    <div className="gzd-citations">
+      <div className="gzd-citations-label">Sources</div>
+      {citations.map((c, i) => (
+        <div className="gzd-citation" key={`${c.source}-${i}`}>
+          <span className="gzd-citation-text">{c.content}</span>
+          {c.source && c.source !== 'knowledge base' && c.source !== 'business summary' && (
+            <span className="gzd-citation-src">{c.source}</span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function EmbeddableWidget({ businessId }) {
   const [businessName, setBusinessName] = useState('Glazed');
   const [name, setName] = useState('');
@@ -216,6 +233,7 @@ export default function EmbeddableWidget({ businessId }) {
           time: new Date(),
           escalated: Boolean(data.escalated),
           source: data.source || null,
+          citations: data.citations || [],
         },
       ]);
 
@@ -650,6 +668,44 @@ export default function EmbeddableWidget({ businessId }) {
           from { opacity: 0; transform: translateY(6px); }
           to { opacity: 1; transform: translateY(0); }
         }
+
+        .gzd-citations {
+          margin-top: 6px;
+          padding: 8px 10px;
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-left: 3px solid #6366f1;
+          border-radius: 8px;
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+
+        .gzd-citations-label {
+          font-size: 0.6rem;
+          font-weight: 700;
+          letter-spacing: 0.05em;
+          text-transform: uppercase;
+          color: #94a3b8;
+        }
+
+        .gzd-citation {
+          font-size: 0.7rem;
+          color: #475569;
+          line-height: 1.35;
+        }
+
+        .gzd-citation-text {
+          display: block;
+        }
+
+        .gzd-citation-src {
+          display: block;
+          margin-top: 2px;
+          font-size: 0.62rem;
+          color: #6366f1;
+          word-break: break-all;
+        }
       `}</style>
 
       <header className="gzd-header">
@@ -690,6 +746,7 @@ export default function EmbeddableWidget({ businessId }) {
                     {msg.content}
                     {debugMode && !isUser && msg.source && <div className="gzd-debug">{msg.source}</div>}
                   </div>
+                  {!isUser && !msg.escalated && <CitationList citations={msg.citations} />}
                   <div className={`gzd-time ${isUser ? 'user' : 'assistant'}`}>{formatTime(msg.time)}</div>
                 </div>
               </div>
