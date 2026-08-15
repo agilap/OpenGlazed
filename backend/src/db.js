@@ -396,8 +396,18 @@ module.exports = {
   matchChunks,
   matchSummaries,
   plainFtsSearch,
-  // expose for ad-hoc scripts
-  query: (text, params) => pool.query(text, params),
+  // id -> embedding map, for local cosine rerank.
+  // pgvector returns the embedding as a string ("[...]"); parse to a real
+  // array so callers (retriever cosineSim) can index it.
+  getEmbeddingsForIds: async (ids) => {
+    if (!Array.isArray(ids) || ids.length === 0) return new Map();
+    const { rows } = await pool.query(
+      'SELECT id, embedding FROM chunks WHERE id = ANY($1) AND embedding IS NOT NULL',
+      [ids]
+    );
+    const parse = (e) => (typeof e === 'string' ? JSON.parse(e) : e);
+    return new Map(rows.map((r) => [String(r.id), parse(r.embedding)]));
+  },
   ensureSchema,
 };
 

@@ -113,6 +113,33 @@ function mergeBm25Results(primary, secondary) {
   return merged;
 }
 
+function cosineSim(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length === 0) return 0;
+  let dotP = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    dotP += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  const denom = Math.sqrt(na) * Math.sqrt(nb);
+  return denom === 0 ? 0 : dotP / denom;
+}
+
+// Local rerank: rank fused candidates by cosine similarity to the query
+// embedding. No model download, no API key — uses the vectors we already have.
+// Returns rows sorted by rerank_score desc, or null if queryEmbedding missing.
+function rerankCosine(queryEmbedding, fused) {
+  if (!queryEmbedding || fused.length === 0) return null;
+  return fused
+    .map((row) => ({
+      ...row,
+      rerank_score: cosineSim(queryEmbedding, row.embedding),
+    }))
+    .sort((a, b) => b.rerank_score - a.rerank_score);
+}
+
 function reciprocalRankFusion(dense, bm25, k = 60) {
   const scoreMap = new Map();
 
@@ -157,6 +184,18 @@ function assessConfidence(topScore, chunkCount, queryLevels, reranked) {
       shouldEscalate: true,
       reason: 'No chunks retrieved',
     };
+  }
+
+  // Reranked scores are cosine sim (-1..1); RRF scores are positive fractions.
+  // Use the right scale for the relevance gate.
+  if (reranked) {
+    if (topScore < 0.0) {
+      return { confidence: 'low', shouldEscalate: true, reason: `Low relevance: ${topScore.toFixed(3)}` };
+    }
+    if (topScore < 0.25) {
+      return { confidence: 'medium', shouldEscalate: false, reason: null };
+    }
+    return { confidence: 'high', shouldEscalate: false, reason: null };
   }
 
   if (!reranked && Array.isArray(queryLevels) && queryLevels.includes(2)) {
@@ -320,41 +359,62 @@ async function retrieve(businessId, rawQuery) {
   let topScore = fused[0]?.rrf_score || 0;
 
   if (fused.length > 0 && !levelsQueried.includes(2)) {
-    try {
-      const rerankData = await postJsonWithTimeout(
-        `${MODEL_URL}/rerank`,
-        {
-          query: rewrittenQuery,
-          candidates: fused.map((row) => row.content),
-        },
-        10000
-      );
+    // Optional override: external cross-encoder reranker at MODEL_API_URL.
+    if (process.env.MODEL_API_URL) {
+      try {
+        const rerankData = await postJsonWithTimeout(
+          `${MODEL_URL}/rerank`,
+          {
+            query: rewrittenQuery,
+            candidates: fused.map((row) => row.content),
+          },
+          10000
+        );
 
-      const scores = Array.isArray(rerankData?.scores) ? rerankData.scores : null;
-      if (!scores || scores.length !== fused.length) {
-        throw new Error('Invalid rerank scores payload');
+        const scores = Array.isArray(rerankData?.scores) ? rerankData.scores : null;
+        if (!scores || scores.length !== fused.length) {
+          throw new Error('Invalid rerank scores payload');
+        }
+
+        const rerankedRows = fused
+          .map((row, index) => ({
+            ...row,
+            rerank_score: typeof scores[index] === 'number' ? scores[index] : 0,
+          }))
+          .sort((a, b) => b.rerank_score - a.rerank_score);
+
+        top5 = rerankedRows.slice(0, 5);
+        topScore = top5[0]?.rerank_score || 0;
+        rerankSucceeded = true;
+      } catch (error) {
+        console.warn('[retriever] External rerank failed, using local cosine:', error.message);
       }
-
-      const rerankedRows = fused
-        .map((row, index) => ({
-          ...row,
-          rerank_score: typeof scores[index] === 'number' ? scores[index] : 0,
-        }))
-        .sort((a, b) => b.rerank_score - a.rerank_score);
-
-      top5 = rerankedRows.slice(0, 5);
-      topScore = top5[0]?.rerank_score || 0;
-      rerankSucceeded = true;
-    } catch (error) {
-      console.warn('[retriever] Rerank failed:', error.message);
-      top5 = fused.slice(0, 5);
-      topScore = fused[0]?.rrf_score || 0;
-      rerankSucceeded = false;
     }
-  } else {
+
+    // Default: local cosine rerank (no model). Re-rank the fused candidates by
+    // cosine sim to the query embedding — uses vectors already in the DB.
+    if (!rerankSucceeded && queryEmbedding) {
+      try {
+        const ids = fused.map((row) => row.id).filter((id) => id != null);
+        const embMap = await db.getEmbeddingsForIds(ids);
+        const scored = fused
+          .map((row) => ({
+            ...row,
+            rerank_score: embMap.has(row.id) ? cosineSim(queryEmbedding, embMap.get(row.id)) : 0,
+          }))
+          .sort((a, b) => b.rerank_score - a.rerank_score);
+        top5 = scored.slice(0, 5);
+        topScore = top5[0]?.rerank_score ?? 0;
+        rerankSucceeded = true;
+      } catch (error) {
+        console.warn('[retriever] Local rerank failed:', error.message);
+      }
+    }
+  }
+
+  if (!rerankSucceeded) {
     top5 = fused.slice(0, 5);
     topScore = fused[0]?.rrf_score || 0;
-    rerankSucceeded = false;
   }
 
   const { confidence, shouldEscalate, reason } = assessConfidence(
