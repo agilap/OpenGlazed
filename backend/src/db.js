@@ -383,6 +383,11 @@ async function plainFtsSearch(queryText, businessId, matchCount = 20) {
   return rows;
 }
 
+// Raw query passthrough for ad-hoc SQL (e.g. the dashboard route's COUNT/SELECTs).
+async function query(...args) {
+  return pool.query(...args);
+}
+
 module.exports = {
   pool,
   clearBusinessCache,
@@ -423,6 +428,7 @@ module.exports = {
   matchChunks,
   matchSummaries,
   plainFtsSearch,
+  query,
   // id -> embedding map, for local cosine rerank.
   // pgvector returns the embedding as a string ("[...]"); parse to a real
   // array so callers (retriever cosineSim) can index it.
