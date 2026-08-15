@@ -25,6 +25,31 @@ async function chatComplete(prompt, { temperature = 0.3, maxTokens = 1000, signa
   return (response.choices[0].message.content || '').trim();
 }
 
+// Streaming chat completion. Yields tokens via onToken(text). Returns the full
+// concatenated text. OpenAI-compatible (Ollama/LocalAI) use stream:true.
+async function streamChat(prompt, { onToken, temperature = 0.3, maxTokens = 1000, signal } = {}) {
+  const stream = await chatClient.chat.completions.create(
+    {
+      model: chatCfg.model,
+      messages: [{ role: 'user', content: prompt }],
+      temperature,
+      max_tokens: maxTokens,
+      stream: true,
+    },
+    signal ? { signal } : {}
+  );
+
+  let full = '';
+  for await (const part of stream) {
+    const delta = part.choices?.[0]?.delta?.content;
+    if (delta) {
+      full += delta;
+      if (onToken) onToken(delta);
+    }
+  }
+  return full.trim();
+}
+
 // Embed a batch of texts → array of vectors (order preserved).
 async function embedTexts(texts) {
   if (!Array.isArray(texts) || texts.length === 0) return [];
@@ -37,4 +62,4 @@ async function embedQuery(queryText) {
   return vec || null;
 }
 
-module.exports = { chatComplete, embedTexts, embedQuery, chatCfg, embedCfg };
+module.exports = { chatComplete, streamChat, embedTexts, embedQuery, chatCfg, embedCfg };

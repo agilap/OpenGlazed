@@ -8,6 +8,7 @@ const { v4: uuidv4 } = require('uuid');
 
 const {
   generateAnswer,
+  streamAnswer,
   generateEscalationMessage,
   extractLead,
   evaluateAnswer,
@@ -350,6 +351,119 @@ app.post('/api/chat/:businessId', async function (req, res) {
       escalated: false,
       source:    'error',
     });
+  }
+});
+
+/* ── Streaming chat (SSE) ─────────────────────────────────────── */
+app.post('/api/chat/:businessId/stream', async function (req, res) {
+  var businessId          = req.params.businessId;
+  var message             = req.body.message;
+  var sessionId           = req.body.sessionId;
+  var conversationHistory = req.body.conversationHistory || [];
+
+  if (!message || !sessionId) {
+    return res.status(400).json({ error: 'message and sessionId are required' });
+  }
+
+  res.writeHead(200, {
+    'Content-Type':  'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection:      'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+
+  var closed = false;
+  req.on('close', function () { closed = true; });
+
+  var send = function (obj) { if (!closed) res.write('data: ' + JSON.stringify(obj) + '\n\n'); };
+
+  try {
+    var business = await db.getClient(businessId);
+    var retrieval      = await retrieve(businessId, message);
+    var chunks         = retrieval.chunks;
+    var confidence     = retrieval.confidence;
+    var shouldEscalate = retrieval.shouldEscalate;
+    var reason         = retrieval.reason;
+    var rewrittenQuery = retrieval.rewrittenQuery;
+    var raptorSummary  = retrieval.raptorSummary;
+
+    if (shouldEscalate) {
+      var esc = await generateEscalationMessage({
+        query: message, missingInfo: reason || 'Insufficient content',
+        businessName: business.name, brandTone: business.brand_tone || 'professional',
+      });
+      send({ token: esc.response });
+      send({ done: true, escalated: true, source: 'escalation', confidence: confidence, sessionId: sessionId, citations: [] });
+      return res.end();
+    }
+
+    var citations = [];
+    var seenSources = new Set();
+    for (var ci = 0; ci < chunks.length && citations.length < 3; ci += 1) {
+      var ch = chunks[ci];
+      var src = ch.source_url || (ch.level === 2 ? 'business summary' : 'knowledge base');
+      if (seenSources.has(src)) continue;
+      seenSources.add(src);
+      citations.push({ content: (ch.content || '').slice(0, 240), source: src, level: ch.level });
+    }
+
+    var gen = await streamAnswer(
+      {
+        query: message,
+        contextChunks: chunks.map(function (c) { return c.content; }),
+        businessName: business.name,
+        brandTone: business.brand_tone || 'professional',
+        conversationHistory: conversationHistory,
+        keyCta: business.key_cta || 'Get in touch',
+        raptorSummary: raptorSummary,
+      },
+      { onToken: function (t) { send({ token: t }); } }
+    );
+
+    if (gen.escalated) {
+      var gemEsc = await generateEscalationMessage({
+        query: message, missingInfo: gen.reason || 'Insufficient content',
+        businessName: business.name, brandTone: business.brand_tone || 'professional',
+      });
+      send({ token: gemEsc.response });
+      send({ done: true, escalated: true, source: 'model-escalation', confidence: confidence, sessionId: sessionId, citations: [] });
+      return res.end();
+    }
+
+    send({ done: true, escalated: false, source: gen.source, confidence: confidence, sessionId: sessionId, citations: citations });
+
+    setImmediate(async function () {
+      try {
+        await db.saveMessage(businessId, sessionId, 'visitor',   message,  {});
+        await db.saveMessage(businessId, sessionId, 'assistant', gen.response, { confidence: confidence, escalated: false, source: gen.source });
+        if (chunks.length > 0 && gen.source === 'model') {
+          var scores = await evaluateAnswer({ query: message, answer: gen.response, chunks: chunks.map(function (c) { return c.content; }) });
+          await db.insertEvalLog({
+            business_id: businessId, session_id: sessionId,
+            query: rewrittenQuery || message, answer: gen.response,
+            retrieved_chunks: JSON.stringify(chunks),
+            faithfulness_score: scores.faithfulness,
+            answer_relevance_score: scores.answer_relevance,
+            context_precision_score: scores.context_precision,
+            overall_score: (scores.faithfulness !== null && scores.answer_relevance !== null) ? (scores.faithfulness + scores.answer_relevance + (scores.context_precision || 0)) / 3 : null,
+            flagged_hallucination: scores.has_hallucination,
+          });
+        }
+        var allMessages = await db.getTranscripts(businessId, sessionId);
+        var transcript = allMessages.map(function (m) { return m.role + ': ' + m.content; }).join('\n');
+        var lead = await extractLead(transcript);
+        if (lead && lead.email) await db.saveLead(businessId, sessionId, lead);
+      } catch (asyncErr) {
+        console.error('Stream async side-effects failed:', asyncErr.message);
+      }
+    });
+
+    res.end();
+  } catch (err) {
+    console.error('Stream route error:', err);
+    send({ token: "I'm having trouble right now. Please try again." });
+    send({ done: true, escalated: false, source: 'error', sessionId: sessionId, citations: [] });
+    res.end();
   }
 });
 

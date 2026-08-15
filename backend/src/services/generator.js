@@ -145,6 +145,65 @@ async function generateAnswer({
   }
 }
 
+// Streaming variant of generateAnswer. Emits tokens via onToken; resolves to the
+// same shape as generateAnswer (escalated flag handled mid-stream via [ESCALATE]).
+async function streamAnswer(
+  { query, contextChunks, businessName, brandTone, conversationHistory, keyCta, raptorSummary },
+  { onToken } = {}
+) {
+  const safeBusinessName = businessName || 'Our team';
+  const safeBrandTone = brandTone || 'professional';
+  const safeKeyCta = keyCta || 'Contact our team to get started.';
+  const safeContextChunks = Array.isArray(contextChunks) ? contextChunks : [];
+  const historyText = buildHistory(conversationHistory || [], safeBusinessName);
+
+  const prompt = [
+    `You are ${safeBusinessName}'s intelligent sales assistant on their website.`,
+    `Personality: ${safeBrandTone} — knowledgeable, helpful, never pushy.`,
+    '',
+    'STRICT RULES:',
+    '1. Answer ONLY using information in CONTEXT below',
+    '2. Think through context carefully before writing your answer',
+    "3. If context partially answers → answer what you can, state what you don't have",
+    '4. Never say "based on the context" — speak naturally as a representative',
+    '5. Never mention competitors unless visitor explicitly asks',
+    `6. If visitor shows buying intent → naturally end with: ${safeKeyCta}`,
+    '7. Keep under 120 words unless question genuinely requires more',
+    '8. If you cannot answer from context at all → respond with exactly:',
+    '   [ESCALATE]: <one sentence on what is missing>',
+    '',
+    raptorSummary ? `BUSINESS OVERVIEW:\n${raptorSummary}\n` : '',
+    'CONTEXT CHUNKS:',
+    safeContextChunks.map((chunk, index) => `[${index + 1}] ${chunk}`).join('\n\n'),
+    '',
+    'CONVERSATION:',
+    historyText,
+    '',
+    `Visitor: ${query}`,
+    `${safeBusinessName}:`,
+  ].join('\n');
+
+  const { streamChat } = require('./llm');
+  let accumulated = '';
+
+  const flush = (token) => {
+    if (onToken) onToken(token);
+  };
+
+  try {
+    accumulated = await streamChat(prompt, { onToken: flush });
+  } catch (_err) {
+    return { response: safeContextChunks[0] ? `${safeContextChunks[0].slice(0, 280)}...` : null, escalated: safeContextChunks.length === 0, source: 'retriever-only' };
+  }
+
+  if (/^\[ESCALATE\]/i.test(accumulated)) {
+    const reason = accumulated.replace(/^\[ESCALATE\]\s*:\s*/i, '').trim();
+    return { response: null, escalated: true, reason, source: 'model' };
+  }
+
+  return { response: accumulated, escalated: false, source: 'model' };
+}
+
 async function generateEscalationMessage({ query, missingInfo, businessName, brandTone }) {
   const safeBusinessName = businessName || 'Our team';
   const safeBrandTone = brandTone || 'professional';
@@ -253,6 +312,7 @@ async function evaluateAnswer({ query, answer, chunks }) {
 
 module.exports = {
   generateAnswer,
+  streamAnswer,
   generateEscalationMessage,
   generateQueryRewrite,
   extractLead,

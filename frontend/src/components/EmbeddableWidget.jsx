@@ -208,8 +208,15 @@ export default function EmbeddableWidget({ businessId }) {
     setIsTyping(true);
     setError('');
 
+    // placeholder assistant bubble that fills with streamed tokens
+    const assistantId = `stream-${Date.now()}`;
+    setMessages((prev) => [
+      ...prev,
+      { id: assistantId, role: 'assistant', content: '', streaming: true, time: new Date(), citations: [] },
+    ]);
+
     try {
-      const response = await fetch(`${API_BASE}/api/chat/${businessId}`, {
+      const response = await fetch(`${API_BASE}/api/chat/${businessId}/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -219,29 +226,51 @@ export default function EmbeddableWidget({ businessId }) {
         }),
       });
 
-      const data = await response.json();
-      if (!response.ok) {
-        setError(data.error || 'Could not send message.');
-        return;
+      if (!response.ok || !response.body) {
+        throw new Error('Stream failed');
       }
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: data.response || 'I could not generate a response.',
-          time: new Date(),
-          escalated: Boolean(data.escalated),
-          source: data.source || null,
-          citations: data.citations || [],
-        },
-      ]);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
 
-      if (data.escalated && !leadCaptured && !email) {
-        setEscalationSubmitted(false);
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const frames = buffer.split('\n\n');
+        buffer = frames.pop() || '';
+        for (const frame of frames) {
+          const line = frame.replace(/^data:\s*/, '').trim();
+          if (!line) continue;
+          try {
+            const evt = JSON.parse(line);
+            if (evt.token) {
+              setMessages((prev) =>
+                prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + evt.token } : m))
+              );
+            } else if (evt.done) {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId
+                    ? { ...m, streaming: false, escalated: Boolean(evt.escalated), source: evt.source || null, citations: evt.citations || [] }
+                    : m
+                )
+              );
+              if (evt.escalated && !leadCaptured && !email) {
+                setEscalationSubmitted(false);
+              }
+            }
+          } catch (_parseErr) {
+            // ignore malformed frame
+          }
+        }
       }
     } catch (_error) {
       setError('Network error — please try again.');
+      setMessages((prev) => prev.filter((m) => m.id !== assistantId));
     } finally {
       setIsTyping(false);
     }
@@ -411,6 +440,15 @@ export default function EmbeddableWidget({ businessId }) {
           border: 1px solid #e2e8f0;
           box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
         }
+
+        .gzd-bubble.streaming::after {
+          content: '▌';
+          margin-left: 1px;
+          animation: blink 1s step-start infinite;
+          color: #94a3b8;
+        }
+
+        @keyframes blink { 50% { opacity: 0; } }
 
         .gzd-time {
           font-size: 0.65rem;
@@ -736,13 +774,13 @@ export default function EmbeddableWidget({ businessId }) {
           const showAssistantAvatar = !isUser && (!previous || previous.role !== 'assistant');
 
           return (
-            <div key={`${msg.role}-${i}-${msg.content.slice(0, 20)}`}>
+            <div key={msg.id || `${msg.role}-${i}-${msg.content.slice(0, 20)}`}>
               <div className={`gzd-message-row ${isUser ? 'user' : 'assistant'}`}>
                 {!isUser && (
                   <div className={`gzd-assistant-avatar ${showAssistantAvatar ? '' : 'placeholder'}`}>✦</div>
                 )}
                 <div className="gzd-bubble-wrap">
-                  <div className={`gzd-bubble ${isUser ? 'user' : 'assistant'}`}>
+                  <div className={`gzd-bubble ${isUser ? 'user' : 'assistant'}${msg.streaming ? ' streaming' : ''}`}>
                     {msg.content}
                     {debugMode && !isUser && msg.source && <div className="gzd-debug">{msg.source}</div>}
                   </div>
