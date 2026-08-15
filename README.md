@@ -173,5 +173,5 @@ Aligned with the sales-conversion JTBD (used only if you later fine-tune):
 ## Notes
 
 - Database is local PostgreSQL + pgvector (via `docker compose up` + `db/init.sql`). No cloud account needed. Rerank is a local cosine pass by default; set `MODEL_API_URL` to override with a cross-encoder.
-- Chat response includes `source` (`model` or `retriever`) so you can verify which path answered.
+- Re-ingest is incremental: only changed/added chunks are re-embedded, unchanged chunks keep their embeddings, and deleted pages are purged (diffed by a content hash per source).
 - Training/fine-tuning is out of scope — but generation and embeddings are **local-first**: defaults run on Ollama with no API key. Set `LLM_PROVIDER=openai` / `EMBED_PROVIDER=openai` to use OpenAI (or any OpenAI-compatible endpoint) instead.

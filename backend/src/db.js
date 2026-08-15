@@ -242,18 +242,43 @@ async function deleteChunksBySource(businessId, sourceRef) {
 }
 
 async function insertChunks(payload) {
-  // payload: array of {business_id, chunk_text, source_url, chunk_index, level, token_count, embedding}
+  // payload: array of {business_id, chunk_text, source_url, chunk_index, level, token_count, embedding, content_hash}
   const inserted = [];
   for (const c of payload) {
     const emb = Array.isArray(c.embedding) ? `[${c.embedding.join(',')}]` : c.embedding ?? null;
     const { rows } = await pool.query(
-      `INSERT INTO chunks (business_id, chunk_text, source_url, source_ref, chunk_index, level, token_count, embedding)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-      [c.business_id, c.chunk_text, c.source_url, c.source_ref ?? null, c.chunk_index, c.level, c.token_count, emb]
+      `INSERT INTO chunks (business_id, chunk_text, source_url, source_ref, chunk_index, level, token_count, embedding, content_hash)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+      [c.business_id, c.chunk_text, c.source_url, c.source_ref ?? null, c.chunk_index, c.level, c.token_count, emb, c.content_hash ?? null]
     );
     inserted.push({ ...c, id: rows[0].id });
   }
   return inserted;
+}
+
+// Existing content hashes for a source — used by incremental re-ingest to skip
+// unchanged chunks and to drop chunks whose content no longer exists upstream.
+async function getStoredHashes(businessId, sourceRef) {
+  const { rows } = await pool.query(
+    'SELECT content_hash FROM chunks WHERE business_id = $1 AND source_ref = $2 AND content_hash IS NOT NULL',
+    [businessId, sourceRef]
+  );
+  return new Set(rows.map((r) => r.content_hash));
+}
+
+// Remove chunks from a source whose hash is NOT in the provided keep-set.
+// This is how deleted pages / changed content get purged on re-ingest without
+// wiping the whole source (or other sources).
+async function deleteChunksBySourceExcept(businessId, sourceRef, keepHashes) {
+  if (keepHashes.length === 0) {
+    // Nothing kept → drop the entire source.
+    return deleteChunksBySource(businessId, sourceRef);
+  }
+  const { rowCount } = await pool.query(
+    'DELETE FROM chunks WHERE business_id = $1 AND source_ref = $2 AND content_hash <> ALL($3)',
+    [businessId, sourceRef, keepHashes]
+  );
+  return rowCount ?? 0;
 }
 
 async function deleteSummaries(businessId, level) {
@@ -381,6 +406,8 @@ module.exports = {
   getBusinessStatusCols,
   deleteChunksByBusiness,
   deleteChunksBySource,
+  getStoredHashes,
+  deleteChunksBySourceExcept,
   getAllChunks,
   insertChunks,
   deleteSummaries,
@@ -421,7 +448,15 @@ async function ensureSchema(dim = 1536) {
     "SELECT atttypmod AS m FROM pg_attribute WHERE attrelid = 'chunks'::regclass AND attname = 'embedding'"
   );
   const curDim = current.rows[0] && current.rows[0].m > 0 ? current.rows[0].m : 1536;
-  if (curDim === DIM) return; // already aligned — no-op
+
+  // Incremental-ingest support: content hash (added after the initial schema).
+  // Runs every boot so it's applied even when the vector dim is already aligned.
+  await pool.query('ALTER TABLE chunks ADD COLUMN IF NOT EXISTS content_hash text;');
+  await pool.query(
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_business_source_hash ON chunks(business_id, source_ref, content_hash);'
+  );
+
+  if (curDim === DIM) return; // already aligned — no-op (content_hash done above)
 
   console.log(`[db] migrating vector dim ${curDim} -> ${DIM}`);
   await pool.query(`ALTER TABLE chunks ALTER COLUMN embedding TYPE vector(${DIM});`);

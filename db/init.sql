@@ -86,6 +86,11 @@ ALTER TABLE chunks ADD COLUMN IF NOT EXISTS level integer DEFAULT 0;
 ALTER TABLE chunks ADD COLUMN IF NOT EXISTS cluster_id integer;
 -- source attribution: which input produced this chunk (url | md | pdf | csv | ...)
 ALTER TABLE chunks ADD COLUMN IF NOT EXISTS source_ref text;
+-- content hash (sha256 of chunk text) lets re-ingest skip unchanged chunks,
+-- so we don't re-embed (and re-pay for) content that hasn't moved.
+ALTER TABLE chunks ADD COLUMN IF NOT EXISTS content_hash text;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_business_source_hash
+  ON chunks(business_id, source_ref, content_hash);
 ALTER TABLE chunks ADD COLUMN IF NOT EXISTS fts tsvector
   GENERATED ALWAYS AS (to_tsvector('english', chunk_text)) STORED;
 ALTER TABLE chunks ADD COLUMN IF NOT EXISTS token_count integer;

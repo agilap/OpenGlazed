@@ -1,11 +1,13 @@
 'use strict';
 
 const cheerio = require('cheerio');
+const crypto = require('crypto');
 const {
   updateClientStatus,
   updateIngestProgress,
   deleteChunksByBusiness,
-  deleteChunksBySource,
+  getStoredHashes,
+  deleteChunksBySourceExcept,
   getAllChunks,
   insertChunks,
   deleteSummaries,
@@ -446,14 +448,52 @@ async function attachChunkEmbeddings(chunks) {
 
   return chunks;
 }
+
+function hashText(text) {
+  return crypto.createHash('sha256').update(text).digest('hex');
+}
+
 async function storeLevel0Chunks(chunks, businessId, sourceRef = null) {
-  // Backwards-compatible: when no sourceRef is given (legacy full re-ingest),
-  // wipe the whole business. When sourceRef is set, only that source's chunks
-  // are replaced so other sources survive.
-  if (sourceRef) {
-    await deleteChunksBySource(businessId, sourceRef);
-  } else {
+  // Incremental ingest: only embed + insert chunks whose content hash is NEW for
+  // this source; delete stored chunks whose hash is no longer present upstream
+  // (page removed / content changed). Unchanged chunks keep their existing
+  // embeddings — no re-embed cost. When no sourceRef is given (legacy full
+  // re-ingest), wipe the whole business first.
+  if (!sourceRef) {
     await deleteChunksByBusiness(businessId);
+  } else {
+    const existing = await getStoredHashes(businessId, sourceRef);
+    const incoming = chunks.map((c) => hashText(c.content));
+    const keepHashes = incoming.filter((h) => !existing.has(h));
+    const changed = new Set(keepHashes);
+
+    // Diff counts for observability.
+    const added = incoming.filter((h) => !existing.has(h)).length;
+    const unchanged = incoming.length - added;
+    const removed = await deleteChunksBySourceExcept(businessId, sourceRef, incoming);
+
+    // Only embed + insert the genuinely new/changed chunks.
+    const toInsert = chunks.filter((c) => changed.has(hashText(c.content)));
+
+    let insertedCount = 0;
+    const batchSize = 100;
+    for (let i = 0; i < toInsert.length; i += batchSize) {
+      const batch = toInsert.slice(i, i + batchSize).map((chunk, idx) => ({
+        business_id: businessId,
+        chunk_text: chunk.content,
+        source_url: chunk.source_url,
+        source_ref: sourceRef,
+        chunk_index: i + idx,
+        level: 0,
+        token_count: chunk.token_count,
+        embedding: chunk.embedding || null,
+        content_hash: hashText(chunk.content),
+      }));
+      const stored = await insertChunks(batch);
+      insertedCount += stored.length;
+    }
+
+    return { added: insertedCount, unchanged, removed: Number(removed) || 0 };
   }
 
   const inserted = [];
@@ -469,13 +509,14 @@ async function storeLevel0Chunks(chunks, businessId, sourceRef = null) {
       level: 0,
       token_count: chunk.token_count,
       embedding: chunk.embedding || null,
+      content_hash: hashText(chunk.content),
     }));
 
     const stored = await insertChunks(batch);
     inserted.push(...stored);
   }
 
-  return inserted;
+  return { added: inserted.length, unchanged: 0, removed: 0 };
 }
 
 // Source-agnostic ingestion: adapters emit canonical sections
@@ -497,7 +538,7 @@ async function ingestNormalized(sections, { businessId, sourceType, sourceRef })
     await attachChunkEmbeddings(level0Chunks);
     await updateIngestProgress(businessId, 40);
 
-    const storedChunks = await storeLevel0Chunks(level0Chunks, businessId, sourceRef);
+    const stored = await storeLevel0Chunks(level0Chunks, businessId, sourceRef);
     await updateIngestProgress(businessId, 55);
 
     // RAPTOR is rebuilt across ALL sources for this business (hybrid retriever
@@ -511,7 +552,7 @@ async function ingestNormalized(sections, { businessId, sourceType, sourceRef })
 
     await updateClientStatus(businessId, 'active');
     await updateIngestProgress(businessId, 100);
-    return { chunks: storedChunks.length };
+    return { chunks: stored.added, unchanged: stored.unchanged, removed: stored.removed };
   } catch (error) {
     await updateClientStatus(businessId, 'error');
     throw error;
@@ -839,5 +880,5 @@ async function runIngest(businessId, url) {
   }
 }
 
-module.exports = { runIngest, ingestNormalized };
+module.exports = { runIngest, ingestNormalized, storeLevel0Chunks };
 
