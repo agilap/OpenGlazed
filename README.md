@@ -1,24 +1,24 @@
 # OpenGlazed
 
-> **JTBD:** Convert website visitors into customers by clearly explaining our value, offerings, and credibility without requiring human intervention.
+> **JTBD:** Give any business a website chat assistant they can **self-host and fully own** — running on their own models and data, with no API-key lock-in, no per-token bill, and no third party sitting between them and their customers.
 
-Business-specific website chat assistant with a **hybrid retrieval pipeline** (dense + lexical + RAPTOR + rerank) rather than a single vector lookup.
+OpenGlazed is an **open-source, local-first RAG assistant**. It runs the whole stack on your machine (Postgres + pgvector + Ollama) so customer conversations never leave your infra. Swap in OpenAI/LocalAI/LM Studio via one env var if you want, but the default needs zero external accounts.
 
-- URL scraper (Cheerio) → chunking → local Postgres + pgvector
-- Embeddable chat widget via React + iframe
-- **BlendedRAG retrieval**: dense (pgvector) + BM25 (Postgres FTS) fused with Reciprocal Rank Fusion (RRF=60), a RAPTOR level-2 summary layer, and optional cross-encoder rerank
-- Generation via API key (OpenAI chat) — no self-hosted model server
-- Embeddings via API key (OpenAI `text-embedding-3-small`, 1536-dim)
-- Lead capture (name + email before chat)
-- Dashboard for questions asked + leads captured
-- Confidence gating: `source` field (`model` vs `retriever`) flags whether the answer came from generation or retrieval fallback
+A **hybrid retrieval pipeline** (dense + lexical + RAPTOR + rerank) — not a single vector lookup — grounds answers in your content, and every answer surfaces its citations so you can verify it.
+
+- URL scraper (Cheerio) → semantic chunking → local Postgres + pgvector
+- Embeddable chat widget (React + iframe) that shows the sources it used
+- **BlendedRAG retrieval**: dense (pgvector) + BM25 (Postgres FTS) fused with Reciprocal Rank Fusion (RRF=60), a RAPTOR summary layer, and a local cosine rerank — all on by default, no extra services
+- Generation + embeddings run **locally on Ollama** by default (no API key); OpenAI-compatible providers selectable via env
+- Lead capture (name + email before chat) + dashboard for questions asked and leads captured
+- Confidence gating: the response carries a `source` field (`model` vs `retriever`) so you can see whether it came from generation or retrieval fallback
 
 ## Tech stack
 
 - **Backend:** Node.js / Express + node-postgres (`pg`)
 - **Frontend:** React 19 + React Router + Vite
 - Generation + retrieval default to **local Ollama** (no API key); OpenAI-compatible providers (LocalAI, LM Studio, OpenAI) selectable via env
-- **Rerank (optional):** cross-encoder via `MODEL_API_URL` if set; otherwise skipped
+- **Rerank:** local cosine rerank over the fused candidates by default (uses the vectors already in the DB); an external cross-encoder at `MODEL_API_URL` is an optional override
 - **Database:** PostgreSQL + pgvector (runs locally via Docker — no cloud account needed)
 
 ## Project structure
@@ -120,7 +120,7 @@ OLLAMA_EMBED_MODEL=nomic-embed-text   # 768-dim
 The vector schema auto-migrates to your embedding dim (`embedCfg.dim`), so
 switching models (768 / 1024 / 1536 / 3072) needs no manual SQL.
 
-Rerank is skipped unless `MODEL_API_URL` is set.
+Rerank runs by default as a local cosine pass over the fused candidates; set `MODEL_API_URL` to use an external cross-encoder instead.
 
 ## Product flow
 
@@ -129,7 +129,7 @@ Rerank is skipped unless `MODEL_API_URL` is set.
 3. Business content chunks are stored in the local Postgres + pgvector database for retrieval context
 4. You receive iframe embed code and URL
 5. Site visitor opens widget, submits name/email, and starts chat
-6. Backend retrieves top chunks (dense + BM25 + RAPTOR) and generates an answer via the API key
+6. Backend retrieves top chunks (dense + BM25 + RAPTOR) and generates an answer with a **local model** (Ollama by default)
 7. Business sees all questions and captured leads on `/dashboard/:id`
 
 ## Main files
@@ -172,6 +172,6 @@ Aligned with the sales-conversion JTBD (used only if you later fine-tune):
 
 ## Notes
 
-- Database is local PostgreSQL + pgvector (via `docker compose up` + `db/init.sql`). No cloud account needed. The rerank step is **optional**: without `MODEL_API_URL`, the backend still answers from retrieval (fallback).
+- Database is local PostgreSQL + pgvector (via `docker compose up` + `db/init.sql`). No cloud account needed. Rerank is a local cosine pass by default; set `MODEL_API_URL` to override with a cross-encoder.
 - Chat response includes `source` (`model` or `retriever`) so you can verify which path answered.
-- Training/fine-tuning is out of scope — generation and embeddings are API-first (OpenAI key). The optional `MODEL_API_URL` is only for a cross-encoder rerank service.
+- Training/fine-tuning is out of scope — but generation and embeddings are **local-first**: defaults run on Ollama with no API key. Set `LLM_PROVIDER=openai` / `EMBED_PROVIDER=openai` to use OpenAI (or any OpenAI-compatible endpoint) instead.
