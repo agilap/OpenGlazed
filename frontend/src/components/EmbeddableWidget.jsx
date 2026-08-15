@@ -712,7 +712,6 @@ export default function EmbeddableWidget({ businessId }) {
           padding: 8px 10px;
           background: #f8fafc;
           border: 1px solid #e2e8f0;
-          border-left: 3px solid #6366f1;
           border-radius: 8px;
           display: flex;
           flex-direction: column;
