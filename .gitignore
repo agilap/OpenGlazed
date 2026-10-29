@@ -67,3 +67,6 @@ __pycache__/
 *.pyc
 dist/
 .vite/
+# oh-my-claudecode runtime state
+.omc/
+.github/
