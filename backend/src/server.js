@@ -360,7 +360,7 @@ app.post('/api/chat/:businessId/stream', async function (req, res) {
   });
 
   var closed = false;
-  req.on('close', function () { closed = true; });
+  res.on('close', function () { closed = true; });
 
   var send = function (obj) { if (!closed) res.write('data: ' + JSON.stringify(obj) + '\n\n'); };
 

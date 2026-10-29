@@ -430,6 +430,11 @@ async function ensureSchema(dim = 1536) {
   await pool.query(
     'CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_business_source_hash ON chunks(business_id, source_ref, content_hash);'
   );
+  await pool.query(`DO $$ BEGIN
+    IF (SELECT data_type FROM information_schema.columns WHERE table_name = 'messages' AND column_name = 'confidence') <> 'text' THEN
+      ALTER TABLE messages ALTER COLUMN confidence TYPE text;
+    END IF;
+  END $$;`);
 
   if (curDim === DIM) return;
 

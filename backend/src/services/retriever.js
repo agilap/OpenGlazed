@@ -2,6 +2,7 @@
 
 const { generateQueryRewrite } = require('./generator');
 const db = require('../db');
+const { embedQuery } = require('./llm');
 
 const MODEL_URL = process.env.MODEL_API_URL || 'http://localhost:8000';
 

@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS messages (
   session_id   TEXT NOT NULL,
   role         TEXT NOT NULL CHECK (role IN ('visitor', 'assistant', 'system')),
   content      TEXT NOT NULL,
-  confidence   FLOAT,
+  confidence   TEXT,
   escalated    BOOLEAN DEFAULT false,
   source       TEXT,
   created_at   TIMESTAMPTZ DEFAULT now()
