@@ -49,8 +49,8 @@ async function updateIngestProgress(businessId, progress) {
 
 async function saveMessage(businessId, sessionId, role, content, metadata = {}) {
   await pool.query(
-    `INSERT INTO messages (business_id, session_id, role, content, confidence, escalated, source)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    `INSERT INTO messages (business_id, session_id, role, content, confidence, escalated, source, channel)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
     [
       businessId,
       sessionId,
@@ -59,9 +59,26 @@ async function saveMessage(businessId, sessionId, role, content, metadata = {}) 
       metadata.confidence ?? null,
       metadata.escalated ?? false,
       metadata.source ?? null,
+      metadata.channel ?? 'widget',
     ]
   );
   return null;
+}
+
+async function getHistory(businessId, sessionId, channel = 'widget', limit = 20) {
+  const { rows } = await pool.query(
+    `SELECT role, content, created_at FROM (
+       SELECT role, content, created_at, id FROM messages
+       WHERE business_id = $1 AND session_id = $2 AND channel = $3
+       ORDER BY id DESC LIMIT $4
+     ) t ORDER BY id ASC`,
+    [businessId, sessionId, channel, limit]
+  );
+  return rows.map((r) => ({
+    role: r.role === 'visitor' ? 'user' : 'assistant',
+    content: r.content,
+    created_at: r.created_at,
+  }));
 }
 
 async function saveLead(businessId, sessionId, leadData) {
@@ -69,13 +86,13 @@ async function saveLead(businessId, sessionId, leadData) {
     `INSERT INTO leads (business_id, session_id, name, email, phone, intent, sentiment, key_question, follow_up_priority)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      ON CONFLICT (business_id, session_id) DO UPDATE SET
-       name = EXCLUDED.name,
-       email = EXCLUDED.email,
-       phone = EXCLUDED.phone,
-       intent = EXCLUDED.intent,
-       sentiment = EXCLUDED.sentiment,
-       key_question = EXCLUDED.key_question,
-       follow_up_priority = EXCLUDED.follow_up_priority`,
+       name = COALESCE(EXCLUDED.name, leads.name),
+       email = COALESCE(EXCLUDED.email, leads.email),
+       phone = COALESCE(EXCLUDED.phone, leads.phone),
+       intent = COALESCE(EXCLUDED.intent, leads.intent),
+       sentiment = COALESCE(EXCLUDED.sentiment, leads.sentiment),
+       key_question = COALESCE(EXCLUDED.key_question, leads.key_question),
+       follow_up_priority = COALESCE(EXCLUDED.follow_up_priority, leads.follow_up_priority)`,
     [
       businessId,
       sessionId,
@@ -116,19 +133,31 @@ async function getTranscripts(businessId, sessionId = null) {
   return rows;
 }
 
-async function getSessions(businessId) {
+async function getSessions(businessId, { channel = 'widget', limit = 50 } = {}) {
   const { rows } = await pool.query(
-    'SELECT DISTINCT session_id FROM messages WHERE business_id = $1 AND session_id IS NOT NULL ORDER BY session_id DESC',
-    [businessId]
+    `SELECT m.session_id,
+            (ARRAY_AGG(m.content ORDER BY m.id) FILTER (WHERE m.role = 'visitor'))[1] AS title,
+            COUNT(*)::int AS message_count,
+            MAX(m.created_at) AS last_at,
+            BOOL_OR(m.escalated) AS escalated,
+            MAX(l.name) AS lead_name,
+            MAX(l.email) AS lead_email
+     FROM messages m
+     LEFT JOIN leads l ON l.business_id = m.business_id AND l.session_id = m.session_id
+     WHERE m.business_id = $1 AND m.channel = $2 AND m.session_id IS NOT NULL
+     GROUP BY m.session_id
+     ORDER BY last_at DESC
+     LIMIT $3`,
+    [businessId, channel, limit]
   );
-  return rows.map((r) => r.session_id);
+  return rows;
 }
 
 async function getTopQuestions(businessId, days = 7) {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
   const { rows } = await pool.query(
     `SELECT content FROM messages
-     WHERE business_id = $1 AND role = 'visitor' AND created_at >= $2
+     WHERE business_id = $1 AND role = 'visitor' AND channel = 'widget' AND created_at >= $2
      ORDER BY created_at DESC`,
     [businessId, since]
   );
@@ -138,10 +167,10 @@ async function getTopQuestions(businessId, days = 7) {
 async function getDashboardStats(businessId) {
   const [leads, sessions, esc, asst, total] = await Promise.all([
     pool.query('SELECT COUNT(*)::int AS c FROM leads WHERE business_id = $1', [businessId]),
-    pool.query('SELECT COUNT(DISTINCT session_id)::int AS c FROM messages WHERE business_id = $1 AND session_id IS NOT NULL', [businessId]),
-    pool.query("SELECT COUNT(*)::int AS c FROM messages WHERE business_id = $1 AND role = 'assistant' AND escalated = true", [businessId]),
-    pool.query("SELECT COUNT(*)::int AS c FROM messages WHERE business_id = $1 AND role = 'assistant'", [businessId]),
-    pool.query('SELECT COUNT(*)::int AS c FROM messages WHERE business_id = $1', [businessId]),
+    pool.query("SELECT COUNT(DISTINCT session_id)::int AS c FROM messages WHERE business_id = $1 AND channel = 'widget' AND session_id IS NOT NULL", [businessId]),
+    pool.query("SELECT COUNT(*)::int AS c FROM messages WHERE business_id = $1 AND channel = 'widget' AND role = 'assistant' AND escalated = true", [businessId]),
+    pool.query("SELECT COUNT(*)::int AS c FROM messages WHERE business_id = $1 AND channel = 'widget' AND role = 'assistant'", [businessId]),
+    pool.query("SELECT COUNT(*)::int AS c FROM messages WHERE business_id = $1 AND channel = 'widget'", [businessId]),
   ]);
 
   const totalLeads = leads.rows[0].c;
@@ -188,15 +217,6 @@ async function updateBusiness(businessId, fields) {
   await pool.query(`UPDATE businesses SET ${set} WHERE id = $${params.length}`, params);
   clearBusinessCache(businessId);
   return null;
-}
-
-async function getLatestTrainingJob(businessId) {
-  const { rows } = await pool.query(
-    `SELECT status, dataset_path, model_path, created_at, updated_at, error
-     FROM training_jobs WHERE business_id = $1 ORDER BY id DESC LIMIT 1`,
-    [businessId]
-  );
-  return rows[0] || null;
 }
 
 async function getBusinessStatusCols(businessId) {
@@ -280,49 +300,12 @@ async function insertSummaries(rows) {
   }
 }
 
-async function insertLeadDirect(businessId, name, email) {
-  const { rows } = await pool.query(
-    'INSERT INTO leads (business_id, name, email) VALUES ($1, $2, $3) RETURNING *',
-    [businessId, name, email]
-  );
-  return rows[0];
-}
-
-async function insertChatSession(businessId, leadId, token) {
-  await pool.query(
-    'INSERT INTO chat_sessions (business_id, lead_id, session_token) VALUES ($1, $2, $3)',
-    [businessId, leadId, token]
-  );
-}
-
-async function getSessionByToken(token) {
-  const { rows } = await pool.query('SELECT * FROM chat_sessions WHERE session_token = $1', [token]);
-  return rows[0] || null;
-}
-
-async function insertQuestion(businessId, sessionId, question, answer) {
-  await pool.query(
-    'INSERT INTO questions (business_id, session_id, question, answer) VALUES ($1, $2, $3, $4)',
-    [businessId, sessionId, question, answer]
-  );
-}
-
 async function insertEvalLog(fields) {
   const cols = Object.keys(fields);
   const vals = cols.map((c) => fields[c]);
   const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
   await pool.query(
     `INSERT INTO eval_logs (${cols.join(', ')}) VALUES (${placeholders})`,
-    vals
-  );
-}
-
-async function insertTrainingJob(fields) {
-  const cols = Object.keys(fields);
-  const vals = cols.map((c) => fields[c]);
-  const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
-  await pool.query(
-    `INSERT INTO training_jobs (${cols.join(', ')}) VALUES (${placeholders})`,
     vals
   );
 }
@@ -378,6 +361,7 @@ module.exports = {
   saveLead,
   getLeads,
   getTranscripts,
+  getHistory,
   getSessions,
   getTopQuestions,
   getDashboardStats,
@@ -386,7 +370,6 @@ module.exports = {
   getBusinessUrl,
   getBusinessProfileCols,
   updateBusiness,
-  getLatestTrainingJob,
   getBusinessStatusCols,
   deleteChunksByBusiness,
   deleteChunksBySource,
@@ -396,12 +379,7 @@ module.exports = {
   insertChunks,
   deleteSummaries,
   insertSummaries,
-  insertLeadDirect,
-  insertChatSession,
-  getSessionByToken,
-  insertQuestion,
   insertEvalLog,
-  insertTrainingJob,
   matchChunksFts,
   matchChunks,
   matchSummaries,
@@ -430,6 +408,8 @@ async function ensureSchema(dim = 1536) {
   await pool.query(
     'CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_business_source_hash ON chunks(business_id, source_ref, content_hash);'
   );
+  await pool.query("ALTER TABLE messages ADD COLUMN IF NOT EXISTS channel text NOT NULL DEFAULT 'widget';");
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(business_id, channel, session_id);');
   await pool.query(`DO $$ BEGIN
     IF (SELECT data_type FROM information_schema.columns WHERE table_name = 'messages' AND column_name = 'confidence') <> 'text' THEN
       ALTER TABLE messages ALTER COLUMN confidence TYPE text;

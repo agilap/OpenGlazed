@@ -19,27 +19,40 @@ async function chatComplete(prompt, { temperature = 0.3, maxTokens = 1000, signa
   return (response.choices[0].message.content || '').trim();
 }
 
-async function streamChat(prompt, { onToken, temperature = 0.3, maxTokens = 1000, signal } = {}) {
+async function chatStream(messages, { tools, toolChoice, onToken, temperature = 0.3, maxTokens = 1000, signal } = {}) {
   const stream = await chatClient.chat.completions.create(
     {
       model: chatCfg.model,
-      messages: [{ role: 'user', content: prompt }],
+      messages,
       temperature,
       max_tokens: maxTokens,
       stream: true,
+      ...(tools && tools.length ? { tools, ...(toolChoice ? { tool_choice: toolChoice } : {}) } : {}),
     },
     signal ? { signal } : {}
   );
 
-  let full = '';
+  let content = '';
+  const calls = [];
   for await (const part of stream) {
-    const delta = part.choices?.[0]?.delta?.content;
-    if (delta) {
-      full += delta;
-      if (onToken) onToken(delta);
+    const delta = part.choices?.[0]?.delta || {};
+    if (delta.content) {
+      content += delta.content;
+      if (onToken) onToken(delta.content);
+    }
+    for (const tc of delta.tool_calls || []) {
+      const call = calls[tc.index] || (calls[tc.index] = { id: '', type: 'function', function: { name: '', arguments: '' } });
+      if (tc.id) call.id = tc.id;
+      if (tc.function?.name) call.function.name += tc.function.name;
+      if (tc.function?.arguments) call.function.arguments += tc.function.arguments;
     }
   }
-  return full.trim();
+  return { content: content.trim(), toolCalls: calls.filter(Boolean) };
+}
+
+async function streamChat(prompt, opts = {}) {
+  const { content } = await chatStream([{ role: 'user', content: prompt }], opts);
+  return content;
 }
 
 async function embedTexts(texts) {
@@ -53,4 +66,4 @@ async function embedQuery(queryText) {
   return vec || null;
 }
 
-module.exports = { chatComplete, streamChat, embedTexts, embedQuery, chatCfg, embedCfg };
+module.exports = { chatComplete, chatStream, streamChat, embedTexts, embedQuery, chatCfg, embedCfg };

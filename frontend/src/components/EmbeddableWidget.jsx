@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { readChatStream } from '../chatStream';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 
@@ -57,11 +58,42 @@ export default function EmbeddableWidget({ businessId }) {
   const shouldShowGate = !leadCaptured && !gateSkipped;
 
   useEffect(() => {
-    const existing = sessionStorage.getItem('glazed_session');
-    const nextSession = existing || crypto.randomUUID();
-    sessionStorage.setItem('glazed_session', nextSession);
+    const key = `glazed_session_${businessId}`;
+    let nextSession = null;
+    try {
+      nextSession = localStorage.getItem(key);
+    } catch (_err) {}
+    if (!nextSession) {
+      nextSession = crypto.randomUUID();
+      try {
+        localStorage.setItem(key, nextSession);
+      } catch (_err) {}
+    }
     setSessionId(nextSession);
-  }, []);
+  }, [businessId]);
+
+  useEffect(() => {
+    if (!sessionId) return undefined;
+    let active = true;
+
+    async function loadHistory() {
+      try {
+        const response = await fetch(
+          `${API_BASE}/api/chat/${businessId}/history?sessionId=${encodeURIComponent(sessionId)}`
+        );
+        const rows = await response.json();
+        if (!active || !response.ok || !Array.isArray(rows) || rows.length === 0) return;
+        const restored = rows.map((m) => ({ role: m.role, content: m.content, time: new Date(m.created_at) }));
+        setMessages((prev) => [...prev.filter((m) => m.isGreeting), ...restored]);
+        setGateSkipped(true);
+      } catch (_error) {}
+    }
+
+    loadHistory();
+    return () => {
+      active = false;
+    };
+  }, [businessId, sessionId]);
 
   useEffect(() => {
     let active = true;
@@ -98,7 +130,6 @@ export default function EmbeddableWidget({ businessId }) {
         }
 
         return [
-          ...prev,
           {
             role: 'assistant',
             isGreeting: true,
@@ -106,6 +137,7 @@ export default function EmbeddableWidget({ businessId }) {
             time: new Date(),
             source: 'greeting',
           },
+          ...prev,
         ];
       });
       setGreetingReady(true);
@@ -221,7 +253,6 @@ export default function EmbeddableWidget({ businessId }) {
         body: JSON.stringify({
           sessionId,
           message: outgoing,
-          conversationHistory: nextMessages.map((m) => ({ role: m.role, content: m.content })),
         }),
       });
 
@@ -229,41 +260,24 @@ export default function EmbeddableWidget({ businessId }) {
         throw new Error('Stream failed');
       }
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        const frames = buffer.split('\n\n');
-        buffer = frames.pop() || '';
-        for (const frame of frames) {
-          const line = frame.replace(/^data:\s*/, '').trim();
-          if (!line) continue;
-          try {
-            const evt = JSON.parse(line);
-            if (evt.token) {
-              setMessages((prev) =>
-                prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + evt.token } : m))
-              );
-            } else if (evt.done) {
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === assistantId
-                    ? { ...m, streaming: false, escalated: Boolean(evt.escalated), source: evt.source || null, citations: evt.citations || [] }
-                    : m
-                )
-              );
-              if (evt.escalated && !leadCaptured && !email) {
-                setEscalationSubmitted(false);
-              }
-            }
-          } catch (_parseErr) {}
+      await readChatStream(response, (evt) => {
+        if (evt.token) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + evt.token } : m))
+          );
+        } else if (evt.done) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId
+                ? { ...m, streaming: false, escalated: Boolean(evt.escalated), source: evt.source || null, citations: evt.citations || [] }
+                : m
+            )
+          );
+          if (evt.escalated && !leadCaptured && !email) {
+            setEscalationSubmitted(false);
+          }
         }
-      }
+      });
     } catch (_error) {
       setError('Network error — please try again.');
       setMessages((prev) => prev.filter((m) => m.id !== assistantId));

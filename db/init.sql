@@ -18,17 +18,6 @@ CREATE TABLE IF NOT EXISTS chunks (
   created_at   TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS training_jobs (
-  id            BIGSERIAL PRIMARY KEY,
-  business_id   BIGINT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
-  status        TEXT NOT NULL DEFAULT 'queued',
-  dataset_path  TEXT,
-  model_path    TEXT,
-  error         TEXT,
-  created_at    TIMESTAMPTZ DEFAULT now(),
-  updated_at    TIMESTAMPTZ DEFAULT now()
-);
-
 CREATE TABLE IF NOT EXISTS leads (
   id                  BIGSERIAL PRIMARY KEY,
   business_id         BIGINT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
@@ -53,23 +42,7 @@ CREATE TABLE IF NOT EXISTS messages (
   confidence   TEXT,
   escalated    BOOLEAN DEFAULT false,
   source       TEXT,
-  created_at   TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS chat_sessions (
-  id             BIGSERIAL PRIMARY KEY,
-  business_id    BIGINT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
-  lead_id        BIGINT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
-  session_token  TEXT NOT NULL UNIQUE,
-  created_at     TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS questions (
-  id           BIGSERIAL PRIMARY KEY,
-  business_id  BIGINT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
-  session_id   BIGINT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
-  question     TEXT NOT NULL,
-  answer       TEXT NOT NULL,
+  channel      TEXT NOT NULL DEFAULT 'widget',
   created_at   TIMESTAMPTZ DEFAULT now()
 );
 
@@ -121,14 +94,12 @@ CREATE TABLE IF NOT EXISTS eval_logs (
 
 CREATE INDEX IF NOT EXISTS idx_chunks_business        ON chunks(business_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_topic           ON chunks(business_id, topic);
-CREATE INDEX IF NOT EXISTS idx_training_jobs_business ON training_jobs(business_id);
 CREATE INDEX IF NOT EXISTS idx_leads_business         ON leads(business_id);
 CREATE INDEX IF NOT EXISTS idx_leads_session          ON leads(business_id, session_id);
 CREATE INDEX IF NOT EXISTS idx_messages_business      ON messages(business_id);
 CREATE INDEX IF NOT EXISTS idx_messages_session       ON messages(business_id, session_id);
 CREATE INDEX IF NOT EXISTS idx_messages_role          ON messages(business_id, role);
-CREATE INDEX IF NOT EXISTS idx_chat_sessions_token    ON chat_sessions(session_token);
-CREATE INDEX IF NOT EXISTS idx_questions_business     ON questions(business_id);
+CREATE INDEX IF NOT EXISTS idx_messages_channel       ON messages(business_id, channel, session_id);
 CREATE INDEX IF NOT EXISTS chunks_embedding_idx
   ON chunks USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);
 CREATE INDEX IF NOT EXISTS summaries_embedding_idx

@@ -24,6 +24,7 @@ export default function Dashboard() {
   });
   const [ingestStatus, setIngestStatus] = useState({ status: '', ingest_progress: 0 });
   const [leads, setLeads] = useState([]);
+  const [chats, setChats] = useState([]);
   const [selectedLead, setSelectedLead] = useState(null);
   const [transcript, setTranscript] = useState([]);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
@@ -72,7 +73,7 @@ export default function Dashboard() {
     setStats({
       totalLeads: json.totalLeads || 0,
       totalConversations: json.totalConversations || 0,
-      escalationRate: Math.round((json.escalationRate || 0) * 100) / 100,
+      escalationRate: Math.round((json.escalationRate || 0) * 100),
     });
   }
 
@@ -89,18 +90,22 @@ export default function Dashboard() {
   }
 
   async function fetchLeads() {
-    let response = await authedFetch(`${API_BASE}/api/leads/${businessId}`);
-
-    if (!response.ok) {
-      response = await authedFetch(`${API_BASE}/api/dashboard/${businessId}/leads`);
-    }
-
+    const response = await authedFetch(`${API_BASE}/api/dashboard/${businessId}/leads`);
     const json = await response.json();
     if (!response.ok || json.error) {
       throw new Error(json.error || 'Failed to load leads');
     }
 
     setLeads(Array.isArray(json) ? json : []);
+  }
+
+  async function fetchChats() {
+    const response = await authedFetch(`${API_BASE}/api/dashboard/${businessId}/sessions`);
+    const json = await response.json();
+    if (!response.ok || json.error) {
+      throw new Error(json.error || 'Failed to load conversations');
+    }
+    setChats(Array.isArray(json) ? json : []);
   }
 
   useEffect(() => {
@@ -115,6 +120,7 @@ export default function Dashboard() {
           fetchStats(),
           fetchIngestStatus(),
           fetchLeads(),
+          fetchChats(),
         ]);
         if (!active) return;
         return results;
@@ -187,15 +193,7 @@ export default function Dashboard() {
     setReingesting(true);
 
     try {
-      let response = await authedFetch(`${API_BASE}/api/ingest`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ businessId, url: data.business.url }),
-      });
-
-      if (!response.ok) {
-        response = await authedFetch(`${API_BASE}/api/ingest/${businessId}`, { method: 'POST' });
-      }
+      const response = await authedFetch(`${API_BASE}/api/ingest/${businessId}`, { method: 'POST' });
 
       const json = await response.json();
       if (!response.ok || json.error) {
@@ -214,7 +212,7 @@ export default function Dashboard() {
     setError(null);
     setNeedToken(false);
     try {
-      await Promise.all([fetchDashboard(), fetchStats(), fetchIngestStatus(), fetchLeads()]);
+      await Promise.all([fetchDashboard(), fetchStats(), fetchIngestStatus(), fetchLeads(), fetchChats()]);
     } catch (err) {
       setError(err.message);
     }
@@ -256,6 +254,7 @@ export default function Dashboard() {
             <button className="dashboard-nav-item" type="button"><span>◎</span><span>Leads</span></button>
             <button className="dashboard-nav-item" type="button"><span>◌</span><span>Transcripts</span></button>
             <button className="dashboard-nav-item" type="button"><span>◍</span><span>Embed</span></button>
+            <Link className="dashboard-nav-item" to={`/team/${businessId}`}><span>◈</span><span>Team chat</span></Link>
           </nav>
         </div>
 
@@ -365,6 +364,33 @@ export default function Dashboard() {
           })}
 
           <div className="dashboard-table-foot">{leads.length} total leads</div>
+        </section>
+
+        <section className="dashboard-table-card">
+          <div className="dashboard-table-head dashboard-chats-head" role="row">
+            <span>Recent conversation</span>
+            <span>Visitor</span>
+            <span>Messages</span>
+            <span>Last active</span>
+          </div>
+
+          {chats.length === 0 ? <p className="dashboard-empty">No conversations yet.</p> : null}
+
+          {chats.map((chat) => (
+            <button
+              className="dashboard-row dashboard-chats-row"
+              key={chat.session_id}
+              type="button"
+              onClick={() => openTranscript(chat)}
+            >
+              <span className="dashboard-cell">
+                {chat.escalated ? <span className="priority-badge priority-high">needs reply</span> : null} {chat.title || '(no message)'}
+              </span>
+              <span className="dashboard-cell">{chat.lead_name || chat.lead_email || 'Anonymous'}</span>
+              <span className="dashboard-cell">{chat.message_count}</span>
+              <span className="dashboard-cell">{formatDate(chat.last_at)}</span>
+            </button>
+          ))}
         </section>
 
         <section className="dashboard-embed-card">

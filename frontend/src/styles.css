@@ -760,6 +760,88 @@ textarea {
   align-self: flex-start;
 }
 
+.dashboard-chats-head,
+.dashboard-chats-row {
+  grid-template-columns: minmax(200px, 2.4fr) minmax(120px, 1.2fr) minmax(70px, 0.5fr) minmax(140px, 1fr);
+}
+
+.team-shell {
+  height: 100vh;
+}
+
+.team-new {
+  width: 100%;
+  margin-bottom: 16px;
+}
+
+.team-threads {
+  gap: 2px;
+  max-height: calc(100vh - 220px);
+  overflow-y: auto;
+}
+
+.team-thread-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.team-main {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-height: 0;
+}
+
+.team-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 760px;
+  width: 100%;
+  margin: 0 auto;
+  padding-bottom: 16px;
+}
+
+.team-bubble {
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+.team-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 0.72rem;
+  color: var(--on-surface-dim);
+  word-break: break-all;
+}
+
+.team-error {
+  color: var(--error);
+  font-size: 0.85rem;
+  max-width: 760px;
+  width: 100%;
+  margin: 0 auto 8px;
+}
+
+.team-input {
+  display: flex;
+  gap: 8px;
+  max-width: 760px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.team-input .dashboard-token-input {
+  flex: 1;
+  min-width: 0;
+}
+
 .dashboard-loading {
   min-height: 100vh;
   display: grid;
@@ -802,6 +884,16 @@ textarea {
   .dashboard-table-head,
   .dashboard-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .team-shell,
+  .team-main {
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .team-threads {
+    max-height: 200px;
   }
 }
 

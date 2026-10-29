@@ -4,8 +4,6 @@ const { generateQueryRewrite } = require('./generator');
 const db = require('../db');
 const { embedQuery } = require('./llm');
 
-const MODEL_URL = process.env.MODEL_API_URL || 'http://localhost:8000';
-
 function detectQueryLevel(query) {
   const vaguePatterns = [
     'what do you do',
@@ -46,28 +44,6 @@ function normalizeResultRow(row, fallbackLevel = 0) {
     cluster_id: row?.cluster_id ?? null,
     similarity: typeof row?.similarity === 'number' ? row.similarity : null,
   };
-}
-
-async function postJsonWithTimeout(url, payload, timeoutMs) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      throw new Error(`${url} returned HTTP ${response.status}`);
-    }
-
-    return await response.json();
-  } finally {
-    clearTimeout(timeout);
-  }
 }
 
 async function embedQueryLocal(queryText) {
@@ -126,16 +102,6 @@ function cosineSim(a, b) {
   }
   const denom = Math.sqrt(na) * Math.sqrt(nb);
   return denom === 0 ? 0 : dotP / denom;
-}
-
-function rerankCosine(queryEmbedding, fused) {
-  if (!queryEmbedding || fused.length === 0) return null;
-  return fused
-    .map((row) => ({
-      ...row,
-      rerank_score: cosineSim(queryEmbedding, row.embedding),
-    }))
-    .sort((a, b) => b.rerank_score - a.rerank_score);
 }
 
 function reciprocalRankFusion(dense, bm25, k = 60) {
@@ -227,11 +193,11 @@ function assessConfidence(topScore, chunkCount, queryLevels, reranked) {
   };
 }
 
-async function retrieve(businessId, rawQuery) {
+async function retrieve(businessId, rawQuery, { rewrite = true } = {}) {
   const safeRawQuery = (rawQuery || '').trim();
 
   const rawLevels = detectQueryLevel(safeRawQuery);
-  const rewritePromise = generateQueryRewrite(safeRawQuery);
+  const rewritePromise = rewrite ? generateQueryRewrite(safeRawQuery) : Promise.resolve(safeRawQuery);
   const rawBm25Promise = queryBM25(safeRawQuery, businessId);
 
   let rewrittenQuery = safeRawQuery;
@@ -355,38 +321,7 @@ async function retrieve(businessId, rawQuery) {
   let topScore = fused[0]?.rrf_score || 0;
 
   if (fused.length > 0 && !levelsQueried.includes(2)) {
-    if (process.env.MODEL_API_URL) {
-      try {
-        const rerankData = await postJsonWithTimeout(
-          `${MODEL_URL}/rerank`,
-          {
-            query: rewrittenQuery,
-            candidates: fused.map((row) => row.content),
-          },
-          10000
-        );
-
-        const scores = Array.isArray(rerankData?.scores) ? rerankData.scores : null;
-        if (!scores || scores.length !== fused.length) {
-          throw new Error('Invalid rerank scores payload');
-        }
-
-        const rerankedRows = fused
-          .map((row, index) => ({
-            ...row,
-            rerank_score: typeof scores[index] === 'number' ? scores[index] : 0,
-          }))
-          .sort((a, b) => b.rerank_score - a.rerank_score);
-
-        top5 = rerankedRows.slice(0, 5);
-        topScore = top5[0]?.rerank_score || 0;
-        rerankSucceeded = true;
-      } catch (error) {
-        console.warn('[retriever] External rerank failed, using local cosine:', error.message);
-      }
-    }
-
-    if (!rerankSucceeded && queryEmbedding) {
+    if (queryEmbedding) {
       try {
         const ids = fused.map((row) => row.id).filter((id) => id != null);
         const embMap = await db.getEmbeddingsForIds(ids);

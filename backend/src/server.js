@@ -4,16 +4,9 @@ require('dotenv').config()
 const path    = require('path');
 const express = require('express');
 const cors    = require('cors');
-const { v4: uuidv4 } = require('uuid');
 
-const {
-  generateAnswer,
-  streamAnswer,
-  generateEscalationMessage,
-  extractLead,
-  evaluateAnswer,
-} = require('./services/generator');
-const { retrieve }  = require('./services/retriever');
+const { evaluateAnswer } = require('./services/generator');
+const { runAgent }  = require('./services/agent');
 const db            = require('./db');
 const { runIngest, ingestNormalized } = require('./ingest');
 const { ingestSource, SUPPORTED } = require('./sources');
@@ -51,31 +44,6 @@ app.use(function (req, res, next) {
   next();
 });
 
-function injectionGuard(req, res, next) {
-  var text = ((req.body && req.body.message) || '').toLowerCase();
-  var patterns = [
-    'ignore previous instructions', 'ignore all instructions',
-    'you are now', 'pretend you are', 'act as if',
-    'jailbreak', 'dan mode', 'your new instructions',
-    'forget everything', 'new persona', 'system prompt',
-    'disregard your',
-  ];
-  if (patterns.some(function (p) { return text.includes(p); })) {
-    console.warn('INJECTION_DETECTED', {
-      businessId: req.params.businessId,
-      sessionId:  req.body && req.body.sessionId,
-      ip:         req.ip,
-    });
-    return res.status(400).json({
-      error: 'Invalid input',
-      code:  'INJECTION_DETECTED',
-    });
-  }
-  next();
-}
-
-app.use('/api/chat', injectionGuard);
-
 app.post('/api/businesses', requireAdmin, async function (req, res) {
   var name = req.body.name;
   var url  = req.body.url;
@@ -109,9 +77,7 @@ app.get('/api/businesses/:id', async function (req, res) {
     return res.status(404).json({ error: 'business not found' });
   }
 
-  var training = await db.getLatestTrainingJob(req.params.id);
-
-  return res.json({ business: business, training: training });
+  return res.json({ business: business });
 });
 
 app.get('/api/businesses/:id/dashboard', requireAdmin, async function (req, res) {
@@ -120,19 +86,7 @@ app.get('/api/businesses/:id/dashboard', requireAdmin, async function (req, res)
   var business = await db.getBusinessById(businessId);
   if (!business) return res.status(404).json({ error: 'business not found' });
 
-  var qCount = (await db.query('SELECT COUNT(*)::int AS c FROM questions WHERE business_id = $1', [businessId])).rows[0].c;
-  var lCount = (await db.query('SELECT COUNT(*)::int AS c FROM leads WHERE business_id = $1', [businessId])).rows[0].c;
-  var rqRes  = await db.query('SELECT question, answer, created_at FROM questions WHERE business_id = $1 ORDER BY id DESC LIMIT 20', [businessId]);
-  var rlRes  = await db.query('SELECT name, email, created_at FROM leads WHERE business_id = $1 ORDER BY id DESC LIMIT 20', [businessId]);
-  var trRes  = await db.getLatestTrainingJob(businessId);
-
-  return res.json({
-    business:        business,
-    totals:          { questions: qCount || 0, leads: lCount || 0 },
-    recentQuestions: rqRes.rows || [],
-    recentLeads:     rlRes.rows || [],
-    training:        trRes,
-  });
+  return res.json({ business: business });
 });
 
 app.post('/api/ingest/:businessId', requireAdmin, async function (req, res) {
@@ -174,182 +128,18 @@ app.post('/api/sources/:businessId', requireAdmin, async function (req, res) {
     });
 });
 
-app.post('/api/chat/start', async function (req, res) {
-  var businessId = req.body.businessId;
-  var name       = req.body.name;
-  var email      = req.body.email;
+var EVAL_SAMPLE_RATE = process.env.EVAL_SAMPLE_RATE !== undefined ? Number(process.env.EVAL_SAMPLE_RATE) : 0.1;
 
-  if (!businessId || !name || !email) {
-    return res.status(400).json({ error: 'businessId, name, email are required' });
+async function handleChatStream(req, res, surface) {
+  var businessId = req.params.businessId;
+  var message    = req.body.message;
+  var sessionId  = req.body.sessionId;
+
+  if (typeof message !== 'string' || !message.trim() || typeof sessionId !== 'string' || !sessionId) {
+    return res.status(400).json({ error: 'message and sessionId are required strings' });
   }
-
-  var business = await db.getBusinessById(businessId);
-  if (!business) return res.status(404).json({ error: 'business not found' });
-
-  var lead = await db.insertLeadDirect(businessId, name, email);
-  if (!lead) return res.status(500).json({ error: 'failed to create lead' });
-
-  var token = uuidv4();
-  await db.insertChatSession(businessId, lead.id, token);
-
-  return res.json({ sessionToken: token });
-});
-
-app.post('/api/chat/:businessId', async function (req, res) {
-  var businessId          = req.params.businessId;
-  var message             = req.body.message;
-  var sessionId           = req.body.sessionId;
-  var conversationHistory = req.body.conversationHistory || [];
-
-  if (!message || !sessionId) {
-    return res.status(400).json({ error: 'message and sessionId are required' });
-  }
-
-  try {
-    var business = await db.getClient(businessId);
-
-    var retrieval      = await retrieve(businessId, message);
-    var chunks         = retrieval.chunks;
-    var confidence     = retrieval.confidence;
-    var shouldEscalate = retrieval.shouldEscalate;
-    var reason         = retrieval.reason;
-    var rewrittenQuery = retrieval.rewrittenQuery;
-    var raptorSummary  = retrieval.raptorSummary;
-
-    var response, escalated, source;
-
-    if (shouldEscalate) {
-      var escResult = await generateEscalationMessage({
-        query:        message,
-        missingInfo:  reason || 'Insufficient content',
-        businessName: business.name,
-        brandTone:    business.brand_tone || 'professional',
-      });
-      response  = escResult.response;
-      escalated = true;
-      source    = 'escalation';
-    } else {
-      var genResult = await generateAnswer({
-        query:               message,
-        contextChunks:       chunks.map(function (c) { return c.content; }),
-        businessName:        business.name,
-        brandTone:           business.brand_tone || 'professional',
-        conversationHistory: conversationHistory,
-        keyCta:              business.key_cta || 'Get in touch',
-        raptorSummary:       raptorSummary,
-      });
-
-      if (genResult.escalated) {
-        var gemEsc = await generateEscalationMessage({
-          query:        message,
-          missingInfo:  genResult.reason || 'Insufficient content',
-          businessName: business.name,
-          brandTone:    business.brand_tone || 'professional',
-        });
-        response  = gemEsc.response;
-        escalated = true;
-        source    = 'model-escalation';
-      } else {
-        response  = genResult.response;
-        escalated = false;
-        source    = genResult.source;
-      }
-    }
-
-    var citations = [];
-    var seenSources = new Set();
-    for (var ci = 0; ci < chunks.length && citations.length < 3; ci += 1) {
-      var ch = chunks[ci];
-      var src = ch.source_url || (ch.level === 2 ? 'business summary' : 'knowledge base');
-      if (seenSources.has(src)) continue;
-      seenSources.add(src);
-      citations.push({
-        content: (ch.content || '').slice(0, 240),
-        source: src,
-        level: ch.level,
-      });
-    }
-
-    res.json({
-      response: response,
-      escalated: escalated,
-      source: source,
-      confidence: confidence,
-      sessionId: sessionId,
-      citations: citations,
-    });
-
-    setImmediate(async function () {
-      try {
-        await db.saveMessage(businessId, sessionId, 'visitor',   message,  {});
-        await db.saveMessage(businessId, sessionId, 'assistant', response, {
-          confidence: confidence,
-          escalated:  escalated,
-          source:     source,
-        });
-
-        var evalTask = Promise.resolve(null);
-        if (!escalated && chunks.length > 0 && source === 'model') {
-          evalTask = evaluateAnswer({
-            query:  message,
-            answer: response,
-            chunks: chunks.map(function (c) { return c.content; }),
-          }).then(function (scores) {
-            return db.insertEvalLog({
-              business_id:             businessId,
-              session_id:              sessionId,
-              query:                   rewrittenQuery || message,
-              answer:                  response,
-              retrieved_chunks:        JSON.stringify(chunks),
-              faithfulness_score:      scores.faithfulness,
-              answer_relevance_score:  scores.answer_relevance,
-              context_precision_score: scores.context_precision,
-              overall_score:
-                (scores.faithfulness !== null && scores.answer_relevance !== null)
-                  ? (scores.faithfulness + scores.answer_relevance + (scores.context_precision || 0)) / 3
-                  : null,
-              flagged_hallucination: scores.has_hallucination,
-            });
-          });
-        }
-
-        var leadTask = db
-          .getTranscripts(businessId, sessionId)
-          .then(function (allMessages) {
-            var transcript = allMessages.map(function (m) { return m.role + ': ' + m.content; }).join('\n');
-            return extractLead(transcript);
-          })
-          .then(function (lead) {
-            if (lead && lead.email) {
-              return db.saveLead(businessId, sessionId, lead);
-            }
-            return null;
-          });
-
-        await Promise.allSettled([evalTask, leadTask]);
-      } catch (asyncErr) {
-        console.error('Async side-effect failed:', asyncErr.message);
-      }
-    });
-
-  } catch (err) {
-    console.error('Chat route error:', err);
-    res.status(500).json({
-      response:  "I'm having trouble right now. Please try again.",
-      escalated: false,
-      source:    'error',
-    });
-  }
-});
-
-app.post('/api/chat/:businessId/stream', async function (req, res) {
-  var businessId          = req.params.businessId;
-  var message             = req.body.message;
-  var sessionId           = req.body.sessionId;
-  var conversationHistory = req.body.conversationHistory || [];
-
-  if (!message || !sessionId) {
-    return res.status(400).json({ error: 'message and sessionId are required' });
+  if (message.length > 4000 || sessionId.length > 100) {
+    return res.status(400).json({ error: 'message or sessionId too long' });
   }
 
   res.writeHead(200, {
@@ -361,74 +151,49 @@ app.post('/api/chat/:businessId/stream', async function (req, res) {
 
   var closed = false;
   res.on('close', function () { closed = true; });
-
   var send = function (obj) { if (!closed) res.write('data: ' + JSON.stringify(obj) + '\n\n'); };
 
   try {
     var business = await db.getClient(businessId);
-    var retrieval      = await retrieve(businessId, message);
-    var chunks         = retrieval.chunks;
-    var confidence     = retrieval.confidence;
-    var shouldEscalate = retrieval.shouldEscalate;
-    var reason         = retrieval.reason;
-    var rewrittenQuery = retrieval.rewrittenQuery;
-    var raptorSummary  = retrieval.raptorSummary;
+    var history  = await db.getHistory(businessId, sessionId, surface);
 
-    if (shouldEscalate) {
-      var esc = await generateEscalationMessage({
-        query: message, missingInfo: reason || 'Insufficient content',
-        businessName: business.name, brandTone: business.brand_tone || 'professional',
-      });
-      send({ token: esc.response });
-      send({ done: true, escalated: true, source: 'escalation', confidence: confidence, sessionId: sessionId, citations: [] });
-      return res.end();
-    }
+    var result = await runAgent({
+      businessId: businessId,
+      business:   business,
+      surface:    surface,
+      sessionId:  sessionId,
+      history:    history,
+      message:    message,
+      onToken:    function (t) { send({ token: t }); },
+    });
 
-    var citations = [];
-    var seenSources = new Set();
-    for (var ci = 0; ci < chunks.length && citations.length < 3; ci += 1) {
-      var ch = chunks[ci];
-      var src = ch.source_url || (ch.level === 2 ? 'business summary' : 'knowledge base');
-      if (seenSources.has(src)) continue;
-      seenSources.add(src);
-      citations.push({ content: (ch.content || '').slice(0, 240), source: src, level: ch.level });
-    }
-
-    var gen = await streamAnswer(
-      {
-        query: message,
-        contextChunks: chunks.map(function (c) { return c.content; }),
-        businessName: business.name,
-        brandTone: business.brand_tone || 'professional',
-        conversationHistory: conversationHistory,
-        keyCta: business.key_cta || 'Get in touch',
-        raptorSummary: raptorSummary,
-      },
-      { onToken: function (t) { send({ token: t }); } }
-    );
-
-    if (gen.escalated) {
-      var gemEsc = await generateEscalationMessage({
-        query: message, missingInfo: gen.reason || 'Insufficient content',
-        businessName: business.name, brandTone: business.brand_tone || 'professional',
-      });
-      send({ token: gemEsc.response });
-      send({ done: true, escalated: true, source: 'model-escalation', confidence: confidence, sessionId: sessionId, citations: [] });
-      return res.end();
-    }
-
-    send({ done: true, escalated: false, source: gen.source, confidence: confidence, sessionId: sessionId, citations: citations });
+    send({
+      done: true,
+      escalated:  result.escalated,
+      source:     result.source,
+      confidence: result.confidence,
+      sessionId:  sessionId,
+      citations:  result.citations,
+    });
+    res.end();
 
     setImmediate(async function () {
       try {
-        await db.saveMessage(businessId, sessionId, 'visitor',   message,  {});
-        await db.saveMessage(businessId, sessionId, 'assistant', gen.response, { confidence: confidence, escalated: false, source: gen.source });
-        if (chunks.length > 0 && gen.source === 'model') {
-          var scores = await evaluateAnswer({ query: message, answer: gen.response, chunks: chunks.map(function (c) { return c.content; }) });
+        await db.saveMessage(businessId, sessionId, 'visitor', message, { channel: surface });
+        await db.saveMessage(businessId, sessionId, 'assistant', result.response, {
+          confidence: result.confidence,
+          escalated:  result.escalated,
+          source:     result.source,
+          channel:    surface,
+        });
+
+        if (surface === 'widget' && !result.escalated && result.chunks.length > 0 && Math.random() < EVAL_SAMPLE_RATE) {
+          var contents = result.chunks.map(function (c) { return c.content; });
+          var scores = await evaluateAnswer({ query: message, answer: result.response, chunks: contents });
           await db.insertEvalLog({
             business_id: businessId, session_id: sessionId,
-            query: rewrittenQuery || message, answer: gen.response,
-            retrieved_chunks: JSON.stringify(chunks),
+            query: message, answer: result.response,
+            retrieved_chunks: JSON.stringify(result.chunks),
             faithfulness_score: scores.faithfulness,
             answer_relevance_score: scores.answer_relevance,
             context_precision_score: scores.context_precision,
@@ -436,21 +201,28 @@ app.post('/api/chat/:businessId/stream', async function (req, res) {
             flagged_hallucination: scores.has_hallucination,
           });
         }
-        var allMessages = await db.getTranscripts(businessId, sessionId);
-        var transcript = allMessages.map(function (m) { return m.role + ': ' + m.content; }).join('\n');
-        var lead = await extractLead(transcript);
-        if (lead && lead.email) await db.saveLead(businessId, sessionId, lead);
       } catch (asyncErr) {
-        console.error('Stream async side-effects failed:', asyncErr.message);
+        console.error('Chat side-effects failed:', asyncErr.message);
       }
     });
-
-    res.end();
   } catch (err) {
-    console.error('Stream route error:', err);
+    console.error('Chat stream error:', err);
     send({ token: "I'm having trouble right now. Please try again." });
     send({ done: true, escalated: false, source: 'error', sessionId: sessionId, citations: [] });
     res.end();
+  }
+}
+
+app.post('/api/chat/:businessId/stream', function (req, res) {
+  return handleChatStream(req, res, 'widget');
+});
+
+app.get('/api/chat/:businessId/history', async function (req, res) {
+  if (!req.query.sessionId) return res.status(400).json({ error: 'sessionId is required' });
+  try {
+    res.json(await db.getHistory(req.params.businessId, String(req.query.sessionId), 'widget', 100));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -471,48 +243,24 @@ app.post('/api/chat/:businessId/lead', async function (req, res) {
   }
 });
 
-app.post('/api/chat/message', requireAdmin, async function (req, res) {
-  var sessionToken = req.body.sessionToken;
-  var message      = req.body.message;
+app.post('/api/team/:businessId/stream', requireAdmin, function (req, res) {
+  return handleChatStream(req, res, 'team');
+});
 
-  if (!sessionToken || !message) {
-    return res.status(400).json({ error: 'sessionToken and message are required' });
+app.get('/api/team/:businessId/threads', requireAdmin, async function (req, res) {
+  try {
+    res.json(await db.getSessions(req.params.businessId, { channel: 'team' }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
+});
 
-  var session = await db.getSessionByToken(sessionToken);
-  if (!session) return res.status(404).json({ error: 'session not found' });
-
-  var biz = await db.getBusinessProfileCols(session.business_id, ['name', 'url', 'brand_tone', 'key_cta']);
-  biz = biz || {};
-
-  var retrieval = await retrieve(session.business_id, message);
-
-  var response, source;
-  if (retrieval.shouldEscalate) {
-    var esc = await generateEscalationMessage({
-      query:        message,
-      missingInfo:  retrieval.reason || 'Insufficient content',
-      businessName: biz.name || 'this business',
-      brandTone:    biz.brand_tone || 'professional',
-    });
-    response = esc.response;
-    source   = 'escalate';
-  } else {
-    var gen = await generateAnswer({
-      query:         message,
-      contextChunks: retrieval.chunks.map(function (c) { return c.content; }),
-      businessName:  biz.name || 'this business',
-      brandTone:     biz.brand_tone || 'professional',
-      keyCta:        biz.key_cta || 'Get in touch',
-      raptorSummary: retrieval.raptorSummary,
-    });
-    response = gen.response;
-    source   = gen.escalated ? 'escalate' : 'model';
+app.get('/api/team/:businessId/threads/:threadId', requireAdmin, async function (req, res) {
+  try {
+    res.json(await db.getHistory(req.params.businessId, req.params.threadId, 'team', 200));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  await db.insertQuestion(session.business_id, session.id, message, response);
-
-  return res.json({ answer: response, source: source, escalate: source === 'escalate' });
 });
 
 app.get('/api/dashboard/:businessId/stats', requireAdmin, async function (req, res) {
@@ -559,6 +307,11 @@ app.get('/api/dashboard/:businessId/questions', requireAdmin, async function (re
 });
 
 app.get('/health', function (_req, res) { res.json({ ok: true }); });
+
+const { chat: chatCfg } = require('./services/modelConfig');
+if (!process.env.LLM_API_KEY) {
+  console.warn('[llm] LLM_API_KEY not set — calls to ' + chatCfg.baseURL + ' will fail unless that server needs no key.');
+}
 
 const { embed: embedCfg } = require('./services/modelConfig');
 db.ensureSchema(embedCfg.dim).catch(function (err) {

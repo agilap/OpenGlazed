@@ -1,8 +1,6 @@
 'use strict';
 
-const { chatComplete } = require('./llm');
-
-const MODEL_URL = process.env.MODEL_API_URL || 'http://localhost:8000';
+const { chatComplete, streamChat } = require('./llm');
 
 function stripMarkdownFences(text) {
   return (text || '')
@@ -29,62 +27,14 @@ async function callLLM(prompt) {
   return chatComplete(prompt);
 }
 
-async function callLLMFallback(query, contextChunks) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
-
-  try {
-    const response = await fetch(`${MODEL_URL}/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        query,
-        context_chunks: contextChunks,
-      }),
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      throw new Error(`Fallback generate failed (${response.status})`);
-    }
-
-    const data = await response.json();
-    const text = typeof data.response === 'string'
-      ? data.response.trim()
-      : typeof data.answer === 'string'
-        ? data.answer.trim()
-        : '';
-
-    if (!text) {
-      throw new Error('Fallback returned empty response');
-    }
-
-    return {
-      response: text,
-      escalated: false,
-      source: 'model-fallback',
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function generateAnswer({
-  query,
-  contextChunks,
-  businessName,
-  brandTone,
-  conversationHistory,
-  keyCta,
-  raptorSummary,
-}) {
+function buildAnswerPrompt({ query, contextChunks, businessName, brandTone, conversationHistory, keyCta, raptorSummary }) {
   const safeBusinessName = businessName || 'Our team';
   const safeBrandTone = brandTone || 'professional';
   const safeKeyCta = keyCta || 'Contact our team to get started.';
   const safeContextChunks = Array.isArray(contextChunks) ? contextChunks : [];
   const historyText = buildHistory(conversationHistory || [], safeBusinessName);
 
-  const prompt = [
+  return [
     `You are ${safeBusinessName}'s intelligent sales assistant on their website.`,
     `Personality: ${safeBrandTone} — knowledgeable, helpful, never pushy.`,
     '',
@@ -109,79 +59,15 @@ async function generateAnswer({
     `Visitor: ${query}`,
     `${safeBusinessName}:`,
   ].join('\n');
-
-  try {
-    const text = await callLLM(prompt);
-
-    if (/^\[ESCALATE\]/i.test(text)) {
-      const reason = text.replace(/^\[ESCALATE\]\s*:\s*/i, '').trim();
-      return {
-        response: null,
-        escalated: true,
-        reason,
-        source: 'model',
-      };
-    }
-
-    return {
-      response: text,
-      escalated: false,
-      source: 'model',
-    };
-  } catch (_llmError) {
-    try {
-      return await callLLMFallback(query, safeContextChunks);
-    } catch (_fallbackError) {
-      const fallbackText = safeContextChunks[0]
-        ? `${safeContextChunks[0].slice(0, 280)}...`
-        : null;
-
-      return {
-        response: fallbackText,
-        escalated: safeContextChunks.length === 0,
-        source: 'retriever-only',
-      };
-    }
-  }
 }
 
 async function streamAnswer(
   { query, contextChunks, businessName, brandTone, conversationHistory, keyCta, raptorSummary },
   { onToken } = {}
 ) {
-  const safeBusinessName = businessName || 'Our team';
-  const safeBrandTone = brandTone || 'professional';
-  const safeKeyCta = keyCta || 'Contact our team to get started.';
   const safeContextChunks = Array.isArray(contextChunks) ? contextChunks : [];
-  const historyText = buildHistory(conversationHistory || [], safeBusinessName);
+  const prompt = buildAnswerPrompt({ query, contextChunks, businessName, brandTone, conversationHistory, keyCta, raptorSummary });
 
-  const prompt = [
-    `You are ${safeBusinessName}'s intelligent sales assistant on their website.`,
-    `Personality: ${safeBrandTone} — knowledgeable, helpful, never pushy.`,
-    '',
-    'STRICT RULES:',
-    '1. Answer ONLY using information in CONTEXT below',
-    '2. Think through context carefully before writing your answer',
-    "3. If context partially answers → answer what you can, state what you don't have",
-    '4. Never say "based on the context" — speak naturally as a representative',
-    '5. Never mention competitors unless visitor explicitly asks',
-    `6. If visitor shows buying intent → naturally end with: ${safeKeyCta}`,
-    '7. Keep under 120 words unless question genuinely requires more',
-    '8. If you cannot answer from context at all → respond with exactly:',
-    '   [ESCALATE]: <one sentence on what is missing>',
-    '',
-    raptorSummary ? `BUSINESS OVERVIEW:\n${raptorSummary}\n` : '',
-    'CONTEXT CHUNKS:',
-    safeContextChunks.map((chunk, index) => `[${index + 1}] ${chunk}`).join('\n\n'),
-    '',
-    'CONVERSATION:',
-    historyText,
-    '',
-    `Visitor: ${query}`,
-    `${safeBusinessName}:`,
-  ].join('\n');
-
-  const { streamChat } = require('./llm');
   let accumulated = '';
 
   const flush = (token) => {
@@ -246,31 +132,6 @@ async function generateQueryRewrite(rawQuery) {
   }
 }
 
-async function extractLead(transcript) {
-  const prompt = [
-    'Extract lead details from this conversation and return ONLY valid JSON (no markdown):',
-    '{',
-    '  "name": string or null,',
-    '  "email": string or null,',
-    '  "phone": string or null,',
-    '  "intent": "buying"|"researching"|"support"|"unclear",',
-    '  "key_question": "one sentence",',
-    '  "sentiment": "positive"|"neutral"|"frustrated",',
-    '  "follow_up_priority": "high"|"medium"|"low"',
-    '}',
-    'Priority high if transcript mentions price, timeline, or buying signals.',
-    `TRANSCRIPT: ${transcript}`,
-  ].join('\n');
-
-  try {
-    const raw = await callLLM(prompt);
-    const jsonText = stripMarkdownFences(raw);
-    return JSON.parse(jsonText);
-  } catch (_error) {
-    return null;
-  }
-}
-
 async function evaluateAnswer({ query, answer, chunks }) {
   const prompt = [
     'Evaluate this RAG answer and return ONLY valid JSON:',
@@ -309,10 +170,8 @@ async function evaluateAnswer({ query, answer, chunks }) {
 }
 
 module.exports = {
-  generateAnswer,
   streamAnswer,
   generateEscalationMessage,
   generateQueryRewrite,
-  extractLead,
   evaluateAnswer,
 };
