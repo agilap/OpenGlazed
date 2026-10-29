@@ -18,20 +18,6 @@ services:
       retries: 10
     networks: [glazed-net]
 
-  ollama:
-    image: ollama/ollama:latest
-    container_name: glazed-ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - glazed_ollama:/root/.ollama
-    healthcheck:
-      test: ["CMD-SHELL", "ollama list || true"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks: [glazed-net]
-
   app:
     build:
       context: ./backend
@@ -41,7 +27,6 @@ services:
       - ./backend/.env
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://glazed:glazed@db:5432/glazed}
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434/v1}
       PORT: 3000
     ports:
       - "3000:3000"
@@ -57,4 +42,3 @@ networks:
 
 volumes:
   glazed_pgdata:
-  glazed_ollama:

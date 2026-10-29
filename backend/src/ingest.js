@@ -590,23 +590,6 @@ function kmeans(vectors, k, iterations = 12) {
 
 async function clusterEmbeddings(embeddings, k) {
   if (!Array.isArray(embeddings) || embeddings.length === 0) return [];
-  if (process.env.MODEL_API_URL) {
-    try {
-      const response = await fetch(`${process.env.MODEL_API_URL}/cluster`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ embeddings, k }),
-      });
-      if (response.ok) {
-        const data = await response.json();
-        if (Array.isArray(data.labels) && data.labels.length === embeddings.length) {
-          return data.labels;
-        }
-      }
-    } catch (error) {
-      console.warn(`[ingest] cluster override failed, using local k-means: ${error.message}`);
-    }
-  }
   return kmeans(embeddings, k);
 }
 

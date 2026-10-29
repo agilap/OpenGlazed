@@ -1,7 +1,5 @@
 'use strict';
 
-const PROVIDERS = { openai: 'openai', ollama: 'ollama' };
-
 const EMBED_DIMS = {
   'text-embedding-3-small': 1536,
   'text-embedding-3-large': 3072,
@@ -10,45 +8,20 @@ const EMBED_DIMS = {
   'bge-m3': 1024,
 };
 
-function resolveChat() {
-  const provider = (process.env.LLM_PROVIDER || 'ollama').toLowerCase();
-  if (provider === PROVIDERS.openai) {
-    return {
-      provider: 'openai',
-      baseURL: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
-      apiKey: process.env.OPENAI_API_KEY || 'sk-no-key',
-      model: process.env.CHAT_MODEL || 'gpt-4o-mini',
-    };
-  }
-  return {
-    provider: 'ollama',
-    baseURL: (process.env.OLLAMA_BASE_URL || 'http://localhost:11434/v1').replace(/\/$/, ''),
-    apiKey: process.env.OLLAMA_API_KEY || 'ollama',
-    model: process.env.OLLAMA_CHAT_MODEL || 'llama3.1',
-  };
-}
+const trim = (url) => url.replace(/\/$/, '');
 
-function resolveEmbed() {
-  const provider = (process.env.EMBED_PROVIDER || 'ollama').toLowerCase();
-  let model;
-  let baseURL;
-  let apiKey;
+const chat = {
+  baseURL: trim(process.env.LLM_BASE_URL || 'https://api.openai.com/v1'),
+  apiKey: process.env.LLM_API_KEY || 'no-key',
+  model: process.env.LLM_MODEL || 'gpt-4o-mini',
+};
 
-  if (provider === PROVIDERS.openai) {
-    model = process.env.EMBED_MODEL || 'text-embedding-3-small';
-    baseURL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
-    apiKey = process.env.OPENAI_API_KEY || 'sk-no-key';
-  } else {
-    model = process.env.OLLAMA_EMBED_MODEL || 'nomic-embed-text';
-    baseURL = (process.env.OLLAMA_BASE_URL || 'http://localhost:11434/v1').replace(/\/$/, '');
-    apiKey = process.env.OLLAMA_API_KEY || 'ollama';
-  }
-
-  const dim = Number(process.env.EMBED_DIM) || EMBED_DIMS[model] || 1536;
-  return { provider, model, baseURL, apiKey, dim };
-}
-
-const chat = resolveChat();
-const embed = resolveEmbed();
+const embedModel = process.env.EMBED_MODEL || 'text-embedding-3-small';
+const embed = {
+  baseURL: trim(process.env.EMBED_BASE_URL || chat.baseURL),
+  apiKey: process.env.EMBED_API_KEY || chat.apiKey,
+  model: embedModel,
+  dim: Number(process.env.EMBED_DIM) || EMBED_DIMS[embedModel] || 1536,
+};
 
 module.exports = { chat, embed, EMBED_DIMS };
