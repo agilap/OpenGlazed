@@ -1,7 +1,5 @@
 'use strict';
 
-// Minimal CSV -> one chunk per row (header:value lines).
-// TODO: use a real CSV parser (csv-parse) for quoted/escaped commas.
 function parse({ text, filename }) {
   if (!text || !text.trim()) return [];
   const rows = text.split('\n').filter((r) => r.trim().length > 0);

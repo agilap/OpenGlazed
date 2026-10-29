@@ -24,11 +24,6 @@ const port = process.env.PORT || 3000;
 const allowedOrigin = process.env.FRONTEND_ORIGIN       || 'http://localhost:5173';
 const embedOrigin   = process.env.FRONTEND_EMBED_ORIGIN || allowedOrigin;
 
-// ── Admin auth ──────────────────────────────────────────────────
-// Protected endpoints (dashboard data, ingest, source ingestion, business
-// creation) require `Authorization: Bearer <ADMIN_TOKEN>`. If ADMIN_TOKEN is
-// unset we generate a random one at boot and log it, so the deployment is never
-// silently open. The public chat widget endpoints stay unauthenticated.
 let ADMIN_TOKEN = process.env.ADMIN_TOKEN;
 if (!ADMIN_TOKEN) {
   ADMIN_TOKEN = require('crypto').randomBytes(24).toString('hex');
@@ -48,10 +43,6 @@ app.use(cors({ origin: allowedOrigin }));
 app.use(express.json({ limit: '25mb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MIDDLEWARE 1 — Request logger
-// ─────────────────────────────────────────────────────────────────────────────
-
 app.use(function (req, res, next) {
   var start = Date.now();
   res.on('finish', function () {
@@ -59,10 +50,6 @@ app.use(function (req, res, next) {
   });
   next();
 });
-
-// ─────────────────────────────────────────────────────────────────────────────
-// MIDDLEWARE 2 — Prompt injection guard  (applied to /api/chat/* only)
-// ─────────────────────────────────────────────────────────────────────────────
 
 function injectionGuard(req, res, next) {
   var text = ((req.body && req.body.message) || '').toLowerCase();
@@ -88,10 +75,6 @@ function injectionGuard(req, res, next) {
 }
 
 app.use('/api/chat', injectionGuard);
-
-// =============================================================================
-// BUSINESSES
-// =============================================================================
 
 app.post('/api/businesses', requireAdmin, async function (req, res) {
   var name = req.body.name;
@@ -152,10 +135,6 @@ app.get('/api/businesses/:id/dashboard', requireAdmin, async function (req, res)
   });
 });
 
-// =============================================================================
-// INGEST
-// =============================================================================
-
 app.post('/api/ingest/:businessId', requireAdmin, async function (req, res) {
   var businessId = req.params.businessId;
   var business = await db.getBusinessUrl(businessId);
@@ -176,9 +155,6 @@ app.get('/api/ingest/:businessId/status', async function (req, res) {
   });
 });
 
-// ── Multi-source ingestion (md / paste / csv / json / sitemap; pdf/docx stubbed)
-// Body: { sourceType: 'markdown'|'paste'|'csv'|'json'|'sitemap'|'pdf'|'docx',
-//         text?: string, url?: string, filename?: string }
 app.post('/api/sources/:businessId', requireAdmin, async function (req, res) {
   var businessId = Number(req.params.businessId);
   var business = await db.getBusinessById(businessId);
@@ -198,11 +174,6 @@ app.post('/api/sources/:businessId', requireAdmin, async function (req, res) {
     });
 });
 
-// =============================================================================
-// CHAT
-// =============================================================================
-
-/* ── Legacy session-token start ─────────────────────────────────── */
 app.post('/api/chat/start', async function (req, res) {
   var businessId = req.body.businessId;
   var name       = req.body.name;
@@ -224,7 +195,6 @@ app.post('/api/chat/start', async function (req, res) {
   return res.json({ sessionToken: token });
 });
 
-/* ── PRIMARY chat endpoint ─────────────────────────────────────── */
 app.post('/api/chat/:businessId', async function (req, res) {
   var businessId          = req.params.businessId;
   var message             = req.body.message;
@@ -286,8 +256,6 @@ app.post('/api/chat/:businessId', async function (req, res) {
       }
     }
 
-    // Build citations from the retrieved (reranked) chunks so the widget can
-    // show which passages backed the answer. Deduped by source, capped at 3.
     var citations = [];
     var seenSources = new Set();
     for (var ci = 0; ci < chunks.length && citations.length < 3; ci += 1) {
@@ -374,7 +342,6 @@ app.post('/api/chat/:businessId', async function (req, res) {
   }
 });
 
-/* ── Streaming chat (SSE) ─────────────────────────────────────── */
 app.post('/api/chat/:businessId/stream', async function (req, res) {
   var businessId          = req.params.businessId;
   var message             = req.body.message;
@@ -487,7 +454,6 @@ app.post('/api/chat/:businessId/stream', async function (req, res) {
   }
 });
 
-/* ── Direct lead capture (widget form) ─────────────────────────── */
 app.post('/api/chat/:businessId/lead', async function (req, res) {
   try {
     await db.saveLead(req.params.businessId, req.body.sessionId, {
@@ -505,7 +471,6 @@ app.post('/api/chat/:businessId/lead', async function (req, res) {
   }
 });
 
-/* ── Legacy message endpoint (session-token) ────────────────────── */
 app.post('/api/chat/message', requireAdmin, async function (req, res) {
   var sessionToken = req.body.sessionToken;
   var message      = req.body.message;
@@ -550,10 +515,6 @@ app.post('/api/chat/message', requireAdmin, async function (req, res) {
   return res.json({ answer: response, source: source, escalate: source === 'escalate' });
 });
 
-// =============================================================================
-// DASHBOARD
-// =============================================================================
-
 app.get('/api/dashboard/:businessId/stats', requireAdmin, async function (req, res) {
   try {
     res.json(await db.getDashboardStats(req.params.businessId));
@@ -597,14 +558,8 @@ app.get('/api/dashboard/:businessId/questions', requireAdmin, async function (re
   }
 });
 
-// =============================================================================
-// HEALTH
-// =============================================================================
-
 app.get('/health', function (_req, res) { res.json({ ok: true }); });
 
-// Align vector schema to the configured embedding dim (local models may be
-// 768/1024 instead of 1536). No-op when already matched.
 const { embed: embedCfg } = require('./services/modelConfig');
 db.ensureSchema(embedCfg.dim).catch(function (err) {
   console.error('[db] ensureSchema failed:', err.message);

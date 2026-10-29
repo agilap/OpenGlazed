@@ -1,10 +1,5 @@
 'use strict';
 
-// Real, dependency-free test (node:test) for incremental/sync ingest.
-// Proves storeLevel0Chunks only embeds+inserts NEW/CHANGED chunks, preserves
-// the embeddings of UNCHANGED chunks, and removes DELETED ones — against a
-// live Postgres/pgvector (no model needed; embeddings supplied as vectors).
-
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const db = require('../src/db');
@@ -21,7 +16,6 @@ test('storeLevel0Chunks is incremental: add/keep/purge by content hash', async (
   const bid = biz.id;
   const src = 'url:https://incr.test/page';
 
-  // First ingest: A, B, C.
   const r1 = await ingest.storeLevel0Chunks([
     { content: 'A alpha', source_url: 'u', token_count: 1, embedding: mkVec(10) },
     { content: 'B beta',  source_url: 'u', token_count: 1, embedding: mkVec(20) },
@@ -33,7 +27,6 @@ test('storeLevel0Chunks is incremental: add/keep/purge by content hash', async (
 
   const embA_before = (await db.getAllChunks(bid)).find((c) => c.content.includes('A')).embedding;
 
-  // Second ingest: A unchanged, B changed, C deleted.
   const r2 = await ingest.storeLevel0Chunks([
     { content: 'A alpha',   source_url: 'u', token_count: 1, embedding: mkVec(999) },
     { content: 'B beta v2', source_url: 'u', token_count: 1, embedding: mkVec(21) },
@@ -48,7 +41,6 @@ test('storeLevel0Chunks is incremental: add/keep/purge by content hash', async (
   assert.ok(!after.some((c) => c.content.includes('C')), 'C is purged');
 
   const embA_after = after.find((c) => c.content.includes('A')).embedding;
-  // A was unchanged → never re-embedded → its (string) embedding is preserved.
   assert.strictEqual(embA_after, embA_before, 'unchanged chunk keeps its original embedding');
 
   await db.deleteChunksByBusiness(bid);

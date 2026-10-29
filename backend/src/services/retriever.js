@@ -127,9 +127,6 @@ function cosineSim(a, b) {
   return denom === 0 ? 0 : dotP / denom;
 }
 
-// Local rerank: rank fused candidates by cosine similarity to the query
-// embedding. No model download, no API key — uses the vectors we already have.
-// Returns rows sorted by rerank_score desc, or null if queryEmbedding missing.
 function rerankCosine(queryEmbedding, fused) {
   if (!queryEmbedding || fused.length === 0) return null;
   return fused
@@ -186,8 +183,6 @@ function assessConfidence(topScore, chunkCount, queryLevels, reranked) {
     };
   }
 
-  // Reranked scores are cosine sim (-1..1); RRF scores are positive fractions.
-  // Use the right scale for the relevance gate.
   if (reranked) {
     if (topScore < 0.0) {
       return { confidence: 'low', shouldEscalate: true, reason: `Low relevance: ${topScore.toFixed(3)}` };
@@ -359,7 +354,6 @@ async function retrieve(businessId, rawQuery) {
   let topScore = fused[0]?.rrf_score || 0;
 
   if (fused.length > 0 && !levelsQueried.includes(2)) {
-    // Optional override: external cross-encoder reranker at MODEL_API_URL.
     if (process.env.MODEL_API_URL) {
       try {
         const rerankData = await postJsonWithTimeout(
@@ -391,8 +385,6 @@ async function retrieve(businessId, rawQuery) {
       }
     }
 
-    // Default: local cosine rerank (no model). Re-rank the fused candidates by
-    // cosine sim to the query embedding — uses vectors already in the DB.
     if (!rerankSucceeded && queryEmbedding) {
       try {
         const ids = fused.map((row) => row.id).filter((id) => id != null);

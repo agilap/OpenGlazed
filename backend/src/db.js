@@ -1,6 +1,3 @@
-// Local-first data layer: node-postgres (pg) over a pgvector Postgres.
-// Replaces the previous Supabase client. No external accounts required —
-// point DATABASE_URL at the docker-compose Postgres (see db/init.sql).
 'use strict';
 
 const path = require('path');
@@ -13,7 +10,6 @@ const pool = new Pool({
   max: 10,
 });
 
-// Fail fast with a clear message if DATABASE_URL is missing.
 if (!process.env.DATABASE_URL) {
   console.error('[db] DATABASE_URL is not set. Point it at your Postgres (see docker-compose.yml).');
 }
@@ -160,8 +156,6 @@ async function getDashboardStats(businessId) {
   return { totalLeads, totalConversations: distinctSessionCount, escalationRate, avgMessagesPerSession };
 }
 
-// ── Raw table access used by ingest.js / server.js ────────────────────────────
-
 async function insertBusiness(name, url) {
   const { rows } = await pool.query(
     'INSERT INTO businesses (name, url) VALUES ($1, $2) RETURNING *',
@@ -217,7 +211,6 @@ async function deleteChunksByBusiness(businessId) {
   await pool.query('DELETE FROM chunks WHERE business_id = $1', [businessId]);
 }
 
-// All level-0 chunks for a business (used to rebuild RAPTOR across sources).
 async function getAllChunks(businessId) {
   const { rows } = await pool.query(
     'SELECT id, chunk_text AS content, source_url, embedding, token_count FROM chunks WHERE business_id = $1 AND level = 0',
@@ -232,8 +225,6 @@ async function getAllChunks(businessId) {
   }));
 }
 
-// Source-scoped delete: remove only chunks belonging to a specific source so
-// re-ingesting one source (e.g. a re-uploaded .md) never wipes other sources.
 async function deleteChunksBySource(businessId, sourceRef) {
   await pool.query(
     'DELETE FROM chunks WHERE business_id = $1 AND source_ref = $2',
@@ -242,7 +233,6 @@ async function deleteChunksBySource(businessId, sourceRef) {
 }
 
 async function insertChunks(payload) {
-  // payload: array of {business_id, chunk_text, source_url, chunk_index, level, token_count, embedding, content_hash}
   const inserted = [];
   for (const c of payload) {
     const emb = Array.isArray(c.embedding) ? `[${c.embedding.join(',')}]` : c.embedding ?? null;
@@ -256,8 +246,6 @@ async function insertChunks(payload) {
   return inserted;
 }
 
-// Existing content hashes for a source — used by incremental re-ingest to skip
-// unchanged chunks and to drop chunks whose content no longer exists upstream.
 async function getStoredHashes(businessId, sourceRef) {
   const { rows } = await pool.query(
     'SELECT content_hash FROM chunks WHERE business_id = $1 AND source_ref = $2 AND content_hash IS NOT NULL',
@@ -266,12 +254,8 @@ async function getStoredHashes(businessId, sourceRef) {
   return new Set(rows.map((r) => r.content_hash));
 }
 
-// Remove chunks from a source whose hash is NOT in the provided keep-set.
-// This is how deleted pages / changed content get purged on re-ingest without
-// wiping the whole source (or other sources).
 async function deleteChunksBySourceExcept(businessId, sourceRef, keepHashes) {
   if (keepHashes.length === 0) {
-    // Nothing kept → drop the entire source.
     return deleteChunksBySource(businessId, sourceRef);
   }
   const { rowCount } = await pool.query(
@@ -343,8 +327,6 @@ async function insertTrainingJob(fields) {
   );
 }
 
-// ── Retrieval (calls the SQL functions defined in db/init.sql) ─────────────────
-
 async function matchChunksFts(queryText, businessId, matchCount = 20) {
   const { rows } = await pool.query('SELECT * FROM match_chunks_fts($1, $2, $3)', [queryText, businessId, matchCount]);
   return rows;
@@ -370,7 +352,6 @@ async function matchSummaries(queryEmbedding, businessId, level, matchCount = 5)
   return rows;
 }
 
-// Fallback plain FTS for BM25 branch (used when match_chunks_fts returns nothing).
 async function plainFtsSearch(queryText, businessId, matchCount = 20) {
   const { rows } = await pool.query(
     `SELECT id, chunk_text AS content, level, source_url, cluster_id
@@ -383,7 +364,6 @@ async function plainFtsSearch(queryText, businessId, matchCount = 20) {
   return rows;
 }
 
-// Raw query passthrough for ad-hoc SQL (e.g. the dashboard route's COUNT/SELECTs).
 async function query(...args) {
   return pool.query(...args);
 }
@@ -401,7 +381,6 @@ module.exports = {
   getSessions,
   getTopQuestions,
   getDashboardStats,
-  // raw access
   insertBusiness,
   getBusinessById,
   getBusinessUrl,
@@ -423,15 +402,11 @@ module.exports = {
   insertQuestion,
   insertEvalLog,
   insertTrainingJob,
-  // retrieval
   matchChunksFts,
   matchChunks,
   matchSummaries,
   plainFtsSearch,
   query,
-  // id -> embedding map, for local cosine rerank.
-  // pgvector returns the embedding as a string ("[...]"); parse to a real
-  // array so callers (retriever cosineSim) can index it.
   getEmbeddingsForIds: async (ids) => {
     if (!Array.isArray(ids) || ids.length === 0) return new Map();
     const { rows } = await pool.query(
@@ -444,10 +419,6 @@ module.exports = {
   ensureSchema,
 };
 
-// Align the vector columns + retrieval functions to the configured embedding
-// dim. Local models (e.g. nomic-embed-text = 768) don't fit vector(1536).
-// Idempotent: only rebuilds when the current dim differs. Rebuilds the two
-// hnsw indexes (which lock to a fixed dim) + the match/match_summaries fns.
 async function ensureSchema(dim = 1536) {
   const DIM = Number(dim) || 1536;
   const current = await pool.query(
@@ -455,14 +426,12 @@ async function ensureSchema(dim = 1536) {
   );
   const curDim = current.rows[0] && current.rows[0].m > 0 ? current.rows[0].m : 1536;
 
-  // Incremental-ingest support: content hash (added after the initial schema).
-  // Runs every boot so it's applied even when the vector dim is already aligned.
   await pool.query('ALTER TABLE chunks ADD COLUMN IF NOT EXISTS content_hash text;');
   await pool.query(
     'CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_business_source_hash ON chunks(business_id, source_ref, content_hash);'
   );
 
-  if (curDim === DIM) return; // already aligned — no-op (content_hash done above)
+  if (curDim === DIM) return;
 
   console.log(`[db] migrating vector dim ${curDim} -> ${DIM}`);
   await pool.query(`ALTER TABLE chunks ALTER COLUMN embedding TYPE vector(${DIM});`);

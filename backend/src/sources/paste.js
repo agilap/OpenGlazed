@@ -1,6 +1,5 @@
 'use strict';
 
-// Raw pasted text -> one section.
 function parse({ text, filename }) {
   const content = (text || '').trim();
   if (!content) return [];

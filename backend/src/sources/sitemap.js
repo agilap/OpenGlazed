@@ -2,7 +2,6 @@
 
 const axios = require('axios');
 
-// Return <loc> URLs from a sitemap.xml (dispatcher ingests each as 'url').
 async function parse(url) {
   if (!url) throw new Error('sitemap requires a url');
   const { data } = await axios.get(url, { timeout: 15000 });

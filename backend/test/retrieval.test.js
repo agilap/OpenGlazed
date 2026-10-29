@@ -1,13 +1,5 @@
 'use strict';
 
-// Real, dependency-free tests (node:test, built into Node 20+).
-// Covers the model-free, load-bearing paths against a live Postgres/pgvector:
-//   - ensureSchema is idempotent (no-op when dim already matches)
-//   - getEmbeddingsForIds returns parsed vector arrays, keyed so retriever lookups hit
-//   - the rerank data path surfaces the query-aligned chunk first
-//
-// Requires DATABASE_URL (e.g. the docker compose Postgres). Skips gracefully if unset.
-
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
@@ -29,10 +21,9 @@ function cosineSim(a, b) {
 }
 
 test('ensureSchema is idempotent for the current dim', async () => {
-  if (!process.env.DATABASE_URL) return; // skip if no DB
-  // Should not throw and should leave the schema usable.
+  if (!process.env.DATABASE_URL) return;
   await assert.doesNotReject(db.ensureSchema(DIM));
-  const ok = await db.getAllChunks.length; // sanity: module wired
+  const ok = await db.getAllChunks.length;
   assert.strictEqual(typeof ok, 'number');
 });
 
@@ -50,11 +41,9 @@ test('getEmbeddingsForIds returns parsed arrays, keyed for retriever lookups', a
   const ids = chunks.map((c) => c.id);
   const embMap = await db.getEmbeddingsForIds(ids);
 
-  // pgvector returns embedding as a string; the helper must parse to a real array.
   assert.ok(Array.isArray(embMap.get(String(ids[0]))), 'embedding should be a parsed array');
   assert.strictEqual(embMap.has(String(ids[0])), true, 'retriever lookup by String id must hit');
 
-  // Rerank data path: query aligned to chunk B (axis 500).
   const q = mkVec(500);
   const scored = ids
     .map((id) => ({ id, sim: embMap.has(String(id)) ? cosineSim(q, embMap.get(String(id))) : 0 }))

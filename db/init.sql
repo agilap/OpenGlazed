@@ -1,12 +1,5 @@
--- ═══════════════════════════════════════════════════════════════════════════════
--- Glazed — local Postgres (pgvector) init schema
--- Runs automatically from docker-compose on first boot (idempotent).
--- Plain PostgreSQL + pgvector only — NO Supabase / auth / RLS.
--- ═══════════════════════════════════════════════════════════════════════════════
-
 CREATE EXTENSION IF NOT EXISTS vector;
 
--- ── Core tables ────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS businesses (
   id          BIGSERIAL PRIMARY KEY,
   name        TEXT NOT NULL,
@@ -80,14 +73,10 @@ CREATE TABLE IF NOT EXISTS questions (
   created_at   TIMESTAMPTZ DEFAULT now()
 );
 
--- ── Upgrade: chunks ──────────────────────────────────────────────────────────
 ALTER TABLE chunks ADD COLUMN IF NOT EXISTS embedding vector(1536);
 ALTER TABLE chunks ADD COLUMN IF NOT EXISTS level integer DEFAULT 0;
 ALTER TABLE chunks ADD COLUMN IF NOT EXISTS cluster_id integer;
--- source attribution: which input produced this chunk (url | md | pdf | csv | ...)
 ALTER TABLE chunks ADD COLUMN IF NOT EXISTS source_ref text;
--- content hash (sha256 of chunk text) lets re-ingest skip unchanged chunks,
--- so we don't re-embed (and re-pay for) content that hasn't moved.
 ALTER TABLE chunks ADD COLUMN IF NOT EXISTS content_hash text;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_business_source_hash
   ON chunks(business_id, source_ref, content_hash);
@@ -95,7 +84,6 @@ ALTER TABLE chunks ADD COLUMN IF NOT EXISTS fts tsvector
   GENERATED ALWAYS AS (to_tsvector('english', chunk_text)) STORED;
 ALTER TABLE chunks ADD COLUMN IF NOT EXISTS token_count integer;
 
--- ── Upgrade: businesses ──────────────────────────────────────────────────────
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS brand_tone text DEFAULT 'professional';
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS key_cta text;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS ingest_progress integer DEFAULT 0;
@@ -105,7 +93,6 @@ ALTER TABLE businesses ADD COLUMN IF NOT EXISTS primary_offering text;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS industry         text;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS pricing_model    text;
 
--- ── Summaries (RAPTOR) ─────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS summaries (
   id               BIGSERIAL PRIMARY KEY,
   business_id      BIGINT REFERENCES businesses(id) ON DELETE CASCADE,
@@ -117,7 +104,6 @@ CREATE TABLE IF NOT EXISTS summaries (
   created_at       TIMESTAMPTZ DEFAULT now()
 );
 
--- ── Eval logs ──────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS eval_logs (
   id                       BIGSERIAL PRIMARY KEY,
   business_id              BIGINT REFERENCES businesses(id) ON DELETE CASCADE,
@@ -133,7 +119,6 @@ CREATE TABLE IF NOT EXISTS eval_logs (
   created_at               TIMESTAMPTZ DEFAULT now()
 );
 
--- ── Indexes ────────────────────────────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_chunks_business        ON chunks(business_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_topic           ON chunks(business_id, topic);
 CREATE INDEX IF NOT EXISTS idx_training_jobs_business ON training_jobs(business_id);
@@ -153,7 +138,6 @@ CREATE INDEX IF NOT EXISTS idx_eval_logs_business ON eval_logs(business_id);
 CREATE INDEX IF NOT EXISTS idx_eval_logs_session  ON eval_logs(session_id);
 CREATE INDEX IF NOT EXISTS idx_summaries_business_level ON summaries(business_id, level);
 
--- ── Retrieval functions (called by the backend via pg) ────────────────────────
 CREATE OR REPLACE FUNCTION match_chunks(
   query_embedding  vector(1536),
   p_business_id    bigint,

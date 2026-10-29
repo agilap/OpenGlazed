@@ -83,20 +83,13 @@ function jaccardSimilarity(a, b) {
   return union === 0 ? 0 : intersection / union;
 }
 
-// Semantic chunking.
-// Group a document into paragraph-bounded chunks that stay within a token
-// budget, and prefix each chunk with a short heading breadcrumb so retrieved
-// passages carry their section context. This beats the old recursive
-// char-split + naive tail-overlap, which shattered sentences and lost context.
-
-const CHUNK_TOKEN_BUDGET = 320; // ~1280 chars; keeps chunks focused + retrievable
-const TOKENS_PER_CHAR = 0.25; // rough heuristic: 4 chars ≈ 1 token
+const CHUNK_TOKEN_BUDGET = 320;
+const TOKENS_PER_CHAR = 0.25;
 
 function estimateTokens(text) {
   return Math.ceil(text.length * TOKENS_PER_CHAR);
 }
 
-// docs: [{ content, url, heading? }] -> level-0 chunks
 function buildSemanticChunks(docs, businessId) {
   const chunks = [];
 
@@ -132,13 +125,11 @@ function buildSemanticChunks(docs, businessId) {
     for (const para of paragraphs) {
       const paraTokens = estimateTokens(para);
 
-      // A single paragraph over budget gets its own (possibly oversized) chunk.
       if (currentTokens + paraTokens > CHUNK_TOKEN_BUDGET && current) {
         flush();
       }
 
       if (paraTokens > CHUNK_TOKEN_BUDGET) {
-        // Split the long paragraph on sentence boundaries, then budget those.
         const sentences = para.match(/[^.!?]+[.!?]*\s*/g) || [para];
         let buf = '';
         let bufTokens = 0;
@@ -417,8 +408,6 @@ async function scrapeSite(startUrl, maxPages = 50) {
   return pages;
 }
 
-// Legacy alias kept for the two call sites; new code should call
-// buildSemanticChunks directly with [{ content, url, heading }].
 function buildLevel0Chunks(docs, businessId) {
   return buildSemanticChunks(docs, businessId);
 }
@@ -454,11 +443,6 @@ function hashText(text) {
 }
 
 async function storeLevel0Chunks(chunks, businessId, sourceRef = null) {
-  // Incremental ingest: only embed + insert chunks whose content hash is NEW for
-  // this source; delete stored chunks whose hash is no longer present upstream
-  // (page removed / content changed). Unchanged chunks keep their existing
-  // embeddings — no re-embed cost. When no sourceRef is given (legacy full
-  // re-ingest), wipe the whole business first.
   if (!sourceRef) {
     await deleteChunksByBusiness(businessId);
   } else {
@@ -467,12 +451,10 @@ async function storeLevel0Chunks(chunks, businessId, sourceRef = null) {
     const keepHashes = incoming.filter((h) => !existing.has(h));
     const changed = new Set(keepHashes);
 
-    // Diff counts for observability.
     const added = incoming.filter((h) => !existing.has(h)).length;
     const unchanged = incoming.length - added;
     const removed = await deleteChunksBySourceExcept(businessId, sourceRef, incoming);
 
-    // Only embed + insert the genuinely new/changed chunks.
     const toInsert = chunks.filter((c) => changed.has(hashText(c.content)));
 
     let insertedCount = 0;
@@ -519,9 +501,6 @@ async function storeLevel0Chunks(chunks, businessId, sourceRef = null) {
   return { added: inserted.length, unchanged: 0, removed: 0 };
 }
 
-// Source-agnostic ingestion: adapters emit canonical sections
-// [{heading, content, url}], we chunk/embed/store + rebuild RAPTOR.
-// Used by the multi-source feature (backend/src/sources).
 async function ingestNormalized(sections, { businessId, sourceType, sourceRef }) {
   try {
     await updateClientStatus(businessId, 'ingesting');
@@ -541,8 +520,6 @@ async function ingestNormalized(sections, { businessId, sourceType, sourceRef })
     const stored = await storeLevel0Chunks(level0Chunks, businessId, sourceRef);
     await updateIngestProgress(businessId, 55);
 
-    // RAPTOR is rebuilt across ALL sources for this business (hybrid retriever
-    // needs every chunk in the index), not just the one just added.
     const allChunks = await getAllChunks(businessId);
     const level1Rows = await buildLevel1Summaries(allChunks, businessId);
     await updateIngestProgress(businessId, 70);
@@ -559,9 +536,6 @@ async function ingestNormalized(sections, { businessId, sourceType, sourceRef })
   }
 }
 
-// RAPTOR level-1 clustering. Runs LOCAL k-means (no external service, no API
-// key) by default so the RAPTOR summary layer is real out of the box. If
-// MODEL_API_URL exposes a /cluster endpoint it is used as an override.
 function dot(a, b) {
   let s = 0;
   for (let i = 0; i < a.length; i += 1) s += a[i] * b[i];
@@ -578,7 +552,6 @@ function kmeans(vectors, k, iterations = 12) {
   const dim = vectors[0].length;
   if (n <= k) return vectors.map((_, i) => i % k);
 
-  // k-means++ style seeding (deterministic-ish via spread picking)
   const centroids = [vectors[Math.floor(Math.random() * n)].slice()];
   while (centroids.length < k) {
     let best = null;
@@ -592,7 +565,6 @@ function kmeans(vectors, k, iterations = 12) {
 
   let labels = new Array(n).fill(0);
   for (let it = 0; it < iterations; it += 1) {
-    // assign
     for (let i = 0; i < n; i += 1) {
       let best = 0;
       let bestD = Infinity;
@@ -602,7 +574,6 @@ function kmeans(vectors, k, iterations = 12) {
       }
       labels[i] = best;
     }
-    // update
     const sums = Array.from({ length: k }, () => new Array(dim).fill(0));
     const counts = new Array(k).fill(0);
     for (let i = 0; i < n; i += 1) {
@@ -881,4 +852,3 @@ async function runIngest(businessId, url) {
 }
 
 module.exports = { runIngest, ingestNormalized, storeLevel0Chunks };
-

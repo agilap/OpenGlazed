@@ -39,7 +39,6 @@ export default function Dashboard() {
     else localStorage.removeItem('glazed_admin_token');
   };
 
-  // Wraps fetch with the admin bearer token; flags needToken on 401.
   async function authedFetch(url, options = {}) {
     const headers = { ...(options.headers || {}) };
     if (adminToken) headers['Authorization'] = `Bearer ${adminToken}`;
@@ -142,12 +141,10 @@ export default function Dashboard() {
     return () => clearInterval(id);
   }, [businessId]);
 
-  // When the admin token is present (typed or restored), (re)load the dashboard.
   useEffect(() => {
     if (adminToken && businessId) {
       reload();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adminToken]);
 
   async function openTranscript(lead) {

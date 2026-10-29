@@ -145,8 +145,6 @@ async function generateAnswer({
   }
 }
 
-// Streaming variant of generateAnswer. Emits tokens via onToken; resolves to the
-// same shape as generateAnswer (escalated flag handled mid-stream via [ESCALATE]).
 async function streamAnswer(
   { query, contextChunks, businessName, brandTone, conversationHistory, keyCta, raptorSummary },
   { onToken } = {}

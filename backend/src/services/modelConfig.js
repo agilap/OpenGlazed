@@ -1,15 +1,7 @@
 'use strict';
 
-// Resolves which model backend to use for chat + embeddings.
-// Local-first default: Ollama (OpenAI-compatible /v1 endpoint).
-// Set LLM_PROVIDER=openai / EMBED_PROVIDER=openai to use the API instead.
-//
-// Any OpenAI-compatible server works as "local": Ollama, LocalAI, LM Studio,
-// vLLM — they all expose /v1/chat/completions and /v1/embeddings.
-
 const PROVIDERS = { openai: 'openai', ollama: 'ollama' };
 
-// Per-model embedding dims. EMBED_DIM env overrides (used when you swap models).
 const EMBED_DIMS = {
   'text-embedding-3-small': 1536,
   'text-embedding-3-large': 3072,
@@ -28,7 +20,6 @@ function resolveChat() {
       model: process.env.CHAT_MODEL || 'gpt-4o-mini',
     };
   }
-  // ollama (default) — OpenAI-compatible /v1 endpoint
   return {
     provider: 'ollama',
     baseURL: (process.env.OLLAMA_BASE_URL || 'http://localhost:11434/v1').replace(/\/$/, ''),

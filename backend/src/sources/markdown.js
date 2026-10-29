@@ -1,7 +1,5 @@
 'use strict';
 
-// Markdown / plain text -> canonical sections. Splits on ATX headings
-// (#, ##, ###); heading-less docs become one section.
 function parse({ text, filename }) {
   const label = filename || 'document';
   if (!text || !text.trim()) return [];
