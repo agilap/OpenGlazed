@@ -49,6 +49,9 @@ export default function Onboarding() {
   const [ingest, setIngest] = useState({ status: '', ingest_progress: 0 });
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [adminToken, setAdminToken] = useState(() => localStorage.getItem('glazed_admin_token') || '');
+  const [needToken, setNeedToken] = useState(false);
+  const [tokenRejected, setTokenRejected] = useState(false);
   const pollCountRef = useRef(0);
   const celebratedRef = useRef(false);
   const navigate = useNavigate();
@@ -212,9 +215,19 @@ export default function Onboarding() {
     try {
       const response = await fetch(`${API_BASE}/api/businesses`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
+        },
         body: JSON.stringify({ name, url }),
       });
+
+      if (response.status === 401) {
+        setStatus('');
+        setTokenRejected(Boolean(adminToken));
+        setNeedToken(true);
+        return;
+      }
 
       const data = await response.json();
 
@@ -224,6 +237,7 @@ export default function Onboarding() {
         return;
       }
 
+      if (adminToken) localStorage.setItem('glazed_admin_token', adminToken);
       setStatus('Processing...');
       setResult({
         businessId: data.businessId,
@@ -345,6 +359,16 @@ export default function Onboarding() {
               onChange={(e) => { setUrl(e.target.value); if (urlError) setUrlError(''); }}
               aria-invalid={Boolean(urlError)} aria-describedby={urlError ? 'business-url-error' : undefined} required />
             {urlError && <p id="business-url-error" className="ob2-error" role="alert">{urlError}</p>}
+            {needToken && (
+              <>
+                <label htmlFor="admin-token">ADMIN_TOKEN</label>
+                <input id="admin-token" className="ob2-url" type="password" autoComplete="off" value={adminToken}
+                  onChange={(e) => { setAdminToken(e.target.value.trim()); setTokenRejected(false); }}
+                  aria-invalid={tokenRejected} aria-describedby="admin-token-note" required />
+                <p id="admin-token-note" className="ob2-note" style={{ margin: '0 0 16px' }}>This server is protected. The token is in backend/.env, or printed in the backend log at startup.</p>
+                {tokenRejected && <p className="ob2-error" role="alert">That token was rejected.</p>}
+              </>
+            )}
             <button className="ob2-submit" type="submit" disabled={loading}>{loading ? 'Creating...' : 'Start scraping'}</button>
             <p className="ob2-note">Scrapes, chunks and embeds your pages, then hands you an embed snippet.</p>
             {status && <p className="ob2-meta" role="status">{status}</p>}

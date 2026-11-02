@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import AdminTokenForm from '../components/AdminTokenForm';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 
@@ -218,11 +219,32 @@ export default function Dashboard() {
     }
   }
 
-  if (error) {
+  function submitToken(value) {
+    if (value === adminToken) reload();
+    else saveToken(value);
+  }
+
+  const tokenForm = (
+    <AdminTokenForm
+      id="dashboard-admin-token"
+      label="This dashboard is protected. Paste your ADMIN_TOKEN."
+      initialToken={adminToken}
+      rejected={needToken && Boolean(adminToken)}
+      onSubmit={submitToken}
+    />
+  );
+
+  if (needToken && !data) {
+    return <main className="dashboard-loading">{tokenForm}</main>;
+  }
+
+  if (error && !needToken) {
     return (
       <main className="dashboard-loading">
-        <p>{error}</p>
-        <Link to="/">Back to onboarding</Link>
+        <div className="dashboard-load-error">
+          <p role="alert">{error}</p>
+          <Link className="dashboard-action" to="/">Back to home</Link>
+        </div>
       </main>
     );
   }
@@ -248,167 +270,137 @@ export default function Dashboard() {
     <div className="dashboard-shell">
       <aside className="dashboard-sidebar">
         <div>
-          <div className="dashboard-wordmark">Glazed</div>
-          <nav className="dashboard-nav">
-            <button className="dashboard-nav-item dashboard-nav-item--active" type="button"><span>◉</span><span>Overview</span></button>
-            <button className="dashboard-nav-item" type="button"><span>◎</span><span>Leads</span></button>
-            <button className="dashboard-nav-item" type="button"><span>◌</span><span>Transcripts</span></button>
-            <button className="dashboard-nav-item" type="button"><span>◍</span><span>Embed</span></button>
-            <Link className="dashboard-nav-item" to={`/team/${businessId}`}><span>◈</span><span>Team chat</span></Link>
+          <div className="dashboard-wordmark">Glazed AI</div>
+          <nav className="dashboard-nav" aria-label="Dashboard">
+            <a className="dashboard-nav-item dashboard-nav-item--active" href="#overview">Overview</a>
+            <a className="dashboard-nav-item" href="#leads">Leads</a>
+            <a className="dashboard-nav-item" href="#conversations">Conversations</a>
+            <a className="dashboard-nav-item" href="#embed">Embed</a>
+            <Link className="dashboard-nav-item" to={`/team/${businessId}`}>Team chat</Link>
           </nav>
         </div>
-
         <div className="dashboard-sidebar-footer">
           <strong>{businessName}</strong>
           <span className={`dashboard-status-pill dashboard-status-pill--${statusTone}`}>
-            {ingestStatus.status || 'idle'}
+            <span className="dashboard-status-dot" aria-hidden="true" />
+            ingest / {ingestStatus.status || 'idle'}
           </span>
-          <Link to="/" className="dashboard-back-link">← Back to onboarding</Link>
+          <Link to="/" className="dashboard-back-link">← Back to home</Link>
         </div>
       </aside>
 
       <main className="dashboard-main">
-        <header className="dashboard-header">
+        <header className="dashboard-header" id="overview">
           <div>
-            <h1>{businessName} Dashboard</h1>
+            <h1>{businessName}</h1>
             <p>{data.business.url}</p>
           </div>
           <div className="dashboard-actions">
-            <button className="dashboard-action" type="button" onClick={copyEmbedCode}>{copied ? 'Copied!' : 'Copy Embed Code'}</button>
+            <button className="dashboard-action" type="button" onClick={copyEmbedCode}>{copied ? 'Copied!' : 'Copy embed code'}</button>
             <button className="dashboard-action-primary" type="button" onClick={triggerReingest} disabled={reingesting}>
               {reingesting ? 'Re-ingesting...' : 'Re-ingest'}
             </button>
           </div>
         </header>
 
-        {(!adminToken || needToken) && (
-          <section className="dashboard-token-banner">
-            <span>This dashboard is protected. Paste your ADMIN_TOKEN:</span>
-            <input
-              type="password"
-              value={adminToken}
-              placeholder="ADMIN_TOKEN"
-              onChange={(e) => { saveToken(e.target.value); setNeedToken(false); }}
-              className="dashboard-token-input"
-            />
-            <button type="button" className="dashboard-action" onClick={() => reload()}>Load</button>
-          </section>
-        )}
+        {(!adminToken || needToken) && tokenForm}
 
-        <section className="dashboard-stats-grid">
+        <section className="dashboard-stats-grid" aria-label="Stats">
           <article className="dashboard-stat-card">
-            <span className="dashboard-stat-label">Total Leads</span>
+            <span className="dashboard-stat-label">Leads</span>
             <strong className="dashboard-stat-value">{stats.totalLeads}</strong>
-            <span className={`dashboard-trend ${stats.totalLeads > 0 ? 'up' : 'down'}`}>
-              {stats.totalLeads > 0 ? '↗' : '↘'} {stats.totalLeads > 0 ? 'Growing' : 'No activity yet'}
-            </span>
           </article>
           <article className="dashboard-stat-card">
             <span className="dashboard-stat-label">Conversations</span>
             <strong className="dashboard-stat-value">{stats.totalConversations}</strong>
-            <span className={`dashboard-trend ${stats.totalConversations > 0 ? 'up' : 'down'}`}>
-              {stats.totalConversations > 0 ? '↗' : '↘'} {stats.totalConversations > 0 ? 'Healthy volume' : 'Waiting for traffic'}
-            </span>
           </article>
           <article className="dashboard-stat-card">
-            <span className="dashboard-stat-label">Escalation Rate</span>
+            <span className="dashboard-stat-label">Escalation rate</span>
             <strong className="dashboard-stat-value">{stats.escalationRate}%</strong>
-            <span className={`dashboard-trend ${stats.escalationRate < 30 ? 'up' : 'down'}`}>
-              {stats.escalationRate < 30 ? '↗' : '↘'} {stats.escalationRate < 30 ? 'Within target' : 'Needs tuning'}
-            </span>
           </article>
         </section>
 
         {ingestStatus.status === 'ingesting' && (
           <div className="dashboard-ingest-banner">
-            <span>Ingesting knowledge base: {progressValue}%</span>
-            <div className="dashboard-ingest-track">
+            <span className="dashboard-ingest-label"><span className="dashboard-status-dot" aria-hidden="true" />ingest / running, {progressValue}%</span>
+            <div className="dashboard-ingest-track" role="progressbar" aria-label="Ingest progress" aria-valuenow={progressValue} aria-valuemin={0} aria-valuemax={100}>
               <div className="dashboard-ingest-fill" style={{ transform: `scaleX(${progressValue / 100})` }} />
             </div>
           </div>
         )}
 
-        <section className="dashboard-table-card">
-          <div className="dashboard-table-head" role="row">
-            <span>Name</span>
-            <span>Email</span>
-            <span>Intent</span>
-            <span>Sentiment</span>
-            <span>Priority</span>
-            <span>Date</span>
+        <section className="dashboard-table-card" id="leads" aria-labelledby="leads-heading">
+          <div className="dashboard-section-heading">
+            <h2 id="leads-heading">Leads</h2>
+            <span>{leads.length} total</span>
           </div>
-
-          {leads.length === 0 ? <p className="dashboard-empty">No leads yet.</p> : null}
-
-          {leads.map((lead) => {
-            const priority = normalizePriority(lead.follow_up_priority);
-            return (
-              <button
-                className="dashboard-row"
-                key={lead.id || `${lead.email}-${lead.created_at}`}
-                type="button"
-                onClick={() => openTranscript(lead)}
-              >
-                <span className="dashboard-cell">{lead.name || '-'}</span>
-                <span className="dashboard-cell">{lead.email || '-'}</span>
-                <span className="dashboard-cell">{lead.intent || '-'}</span>
-                <span className="dashboard-cell">{lead.sentiment || '-'}</span>
-                <span className="dashboard-cell">
-                  <span className={`priority-badge ${getPriorityClass(priority)}`}>
-                    {lead.follow_up_priority || 'low'}
-                  </span>
-                </span>
-                <span className="dashboard-cell">{formatDate(lead.created_at)}</span>
-              </button>
-            );
-          })}
-
-          <div className="dashboard-table-foot">{leads.length} total leads</div>
+          <div className="dashboard-table-scroll">
+            <table className="dashboard-table">
+              <thead><tr>
+                <th scope="col">Name</th><th scope="col">Email</th><th scope="col">Intent</th>
+                <th scope="col">Sentiment</th><th scope="col">Priority</th><th scope="col">Date</th>
+              </tr></thead>
+              <tbody>
+                {leads.map((lead) => {
+                  const priority = normalizePriority(lead.follow_up_priority);
+                  return (
+                    <tr key={lead.id || `${lead.email}-${lead.created_at}`}>
+                      <td><button className="dashboard-table-button" type="button" onClick={() => openTranscript(lead)}>{lead.name || '-'}</button></td>
+                      <td>{lead.email || '-'}</td><td>{lead.intent || '-'}</td><td>{lead.sentiment || '-'}</td>
+                      <td><span className={`dashboard-priority priority-${priority === 'high' || priority === 'medium' ? priority : 'low'}`}>{lead.follow_up_priority || 'low'}</span></td>
+                      <td className="dashboard-date">{formatDate(lead.created_at)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {leads.length === 0 && (
+            <div className="dashboard-empty-state"><h3>No leads yet</h3><p>Leads appear here when a visitor leaves their details in the widget.</p></div>
+          )}
         </section>
 
-        <section className="dashboard-table-card">
-          <div className="dashboard-table-head dashboard-chats-head" role="row">
-            <span>Recent conversation</span>
-            <span>Visitor</span>
-            <span>Messages</span>
-            <span>Last active</span>
+        <section className="dashboard-table-card" id="conversations" aria-labelledby="conversations-heading">
+          <div className="dashboard-section-heading">
+            <h2 id="conversations-heading">Recent conversations</h2>
+            <span>{chats.filter((chat) => chat.escalated).length} needs reply</span>
           </div>
-
-          {chats.length === 0 ? <p className="dashboard-empty">No conversations yet.</p> : null}
-
-          {chats.map((chat) => (
-            <button
-              className="dashboard-row dashboard-chats-row"
-              key={chat.session_id}
-              type="button"
-              onClick={() => openTranscript(chat)}
-            >
-              <span className="dashboard-cell">
-                {chat.escalated ? <span className="priority-badge priority-high">needs reply</span> : null} {chat.title || '(no message)'}
-              </span>
-              <span className="dashboard-cell">{chat.lead_name || chat.lead_email || 'Anonymous'}</span>
-              <span className="dashboard-cell">{chat.message_count}</span>
-              <span className="dashboard-cell">{formatDate(chat.last_at)}</span>
-            </button>
-          ))}
+          <div className="dashboard-table-scroll">
+            <table className="dashboard-table">
+              <thead><tr>
+                <th scope="col">Conversation</th><th scope="col">Visitor</th><th scope="col">Messages</th><th scope="col">Last active</th>
+              </tr></thead>
+              <tbody>
+                {chats.map((chat) => (
+                  <tr key={chat.session_id}>
+                    <td><button className="dashboard-table-button" type="button" onClick={() => openTranscript(chat)}>
+                      {chat.escalated ? <span className="dashboard-needs-reply">needs reply</span> : null}
+                      {chat.title || '(no message)'}
+                    </button></td>
+                    <td>{chat.lead_name || chat.lead_email || 'Anonymous'}</td>
+                    <td>{chat.message_count}</td><td className="dashboard-date">{formatDate(chat.last_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {chats.length === 0 && (
+            <div className="dashboard-empty-state"><h3>No conversations yet</h3><p>Paste the embed code on your site, or <Link to={`/embed/${businessId}`} target="_blank" rel="noopener noreferrer">test your chatbot</Link>.</p></div>
+          )}
         </section>
 
-        <section className="dashboard-embed-card">
-          <h2>Embed Code</h2>
+        <section className="dashboard-embed-card" id="embed">
+          <h2>Embed code</h2>
           <pre>{embedSnippet}</pre>
         </section>
       </main>
 
-      <aside className={`transcript-panel ${selectedLead ? 'open' : ''}`}>
+      <aside className={`transcript-panel ${selectedLead ? 'open' : ''}`} aria-label="Transcript" inert={!selectedLead}>
         <div className="transcript-header">
-          <h3>Transcript</h3>
-          <button type="button" onClick={() => setSelectedLead(null)}>Close</button>
+          <h2>Transcript</h2>
+          <button className="dashboard-action" type="button" onClick={() => setSelectedLead(null)}>Close</button>
         </div>
-
-        {selectedLead && (
-          <p className="transcript-session">Session: {selectedLead.session_id || 'unknown'}</p>
-        )}
-
+        {selectedLead && <p className="transcript-session">Session: {selectedLead.session_id || 'unknown'}</p>}
         {transcriptLoading ? (
           <p className="dashboard-empty">Loading transcript...</p>
         ) : transcript.length === 0 ? (

@@ -5,8 +5,7 @@ const API_BASE = import.meta.env.VITE_API_BASE || '';
 
 function TypingIndicator() {
   return (
-    <div className="gzd-message-row assistant">
-      <div className="gzd-assistant-avatar placeholder" aria-hidden="true" />
+    <div className="gzd-message-row assistant" role="status" aria-label="Assistant is typing">
       <div className="gzd-bubble assistant gzd-typing-bubble">
         <span />
         <span />
@@ -133,7 +132,7 @@ export default function EmbeddableWidget({ businessId }) {
           {
             role: 'assistant',
             isGreeting: true,
-            content: `Hi there! 👋 I'm ${businessName}'s AI assistant. Ask me anything about our products, pricing, or services.`,
+            content: `Hi there. I'm ${businessName}'s AI assistant. Ask me anything about our products, pricing, or services.`,
             time: new Date(),
             source: 'greeting',
           },
@@ -294,482 +293,84 @@ export default function EmbeddableWidget({ businessId }) {
   return (
     <div className="gzd-widget-root">
       <style>{`
-        :root {
-          --gzd-transition: 300ms cubic-bezier(0.4, 0, 0.2, 1);
-          --gzd-radius-sm: 0.25rem;
-          --gzd-radius-md: 0.5rem;
-          --gzd-radius-lg: 1rem;
-          --gzd-radius-xl: 1.5rem;
-          --gzd-radius-full: 999px;
-        }
-
         .gzd-widget-root {
           height: 100vh;
+          width: 100%;
+          min-width: 0;
           display: flex;
           flex-direction: column;
-          background: #ffffff;
-          font-family: 'Manrope', sans-serif;
+          background: #fff;
+          color: #121218;
+          font-family: Inter, sans-serif;
           overflow: hidden;
           position: relative;
         }
-
-        .gzd-widget-root * {
-          box-sizing: border-box;
-        }
-
-        .gzd-header {
-          background: #5254cc;
-          padding: 20px 20px 44px 20px;
-          display: flex;
-          justify-content: space-between;
-          align-items: flex-start;
-          gap: 12px;
-        }
-
-        .gzd-online {
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-          color: rgba(255, 255, 255, 0.7);
-          font-size: 0.7rem;
-          margin-bottom: 6px;
-        }
-
-        .gzd-online-dot {
-          width: 8px;
-          height: 8px;
-          border-radius: 50%;
-          background: #4ade80;
-          animation: pulseRing 2s infinite;
-        }
-
-        .gzd-name {
-          color: #fff;
-          font-size: 1rem;
-          font-weight: 600;
-          margin-bottom: 2px;
-        }
-
-        .gzd-subname {
-          color: rgba(255, 255, 255, 0.6);
-          font-size: 0.75rem;
-        }
-
-        .gzd-header-avatar {
-          width: 48px;
-          height: 48px;
-          border-radius: 50%;
-          background: rgba(255, 255, 255, 0.15);
-          border: 1.5px solid rgba(255, 255, 255, 0.3);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          flex-shrink: 0;
-        }
-
-        .gzd-header-avatar svg {
-          color: #fff;
-        }
-
-        .gzd-messages {
-          flex: 1;
-          overflow-y: auto;
-          padding: 16px;
-          background: #f8fafc;
-          margin-top: -24px;
-          border-radius: 20px 20px 0 0;
-          display: flex;
-          flex-direction: column;
-          gap: 4px;
-        }
-
-        .gzd-messages::-webkit-scrollbar { width: 4px; }
-        .gzd-messages::-webkit-scrollbar-track { background: transparent; }
-        .gzd-messages::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 2px; }
-
-        .gzd-message-row {
-          display: flex;
-          align-items: flex-end;
-          gap: 6px;
-          animation: messageIn 0.2s ease forwards;
-        }
-
-        .gzd-message-row.user {
-          justify-content: flex-end;
-        }
-
-        .gzd-message-row.assistant {
-          justify-content: flex-start;
-        }
-
-        .gzd-assistant-avatar {
-          width: 24px;
-          height: 24px;
-          border-radius: var(--gzd-radius-full);
-          background: #6366f1;
-          color: #fff;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 0.7rem;
-          flex-shrink: 0;
-          margin-bottom: 18px;
-        }
-
-        .gzd-assistant-avatar.placeholder {
-          opacity: 0;
-        }
-
-        .gzd-bubble-wrap {
-          max-width: 78%;
-          display: flex;
-          flex-direction: column;
-        }
-
-        .gzd-bubble {
-          padding: 10px 14px;
-          font-size: 0.875rem;
-          line-height: 1.45;
-          word-break: break-word;
-        }
-
-        .gzd-bubble.user {
-          background: #494bd6;
-          color: #fff;
-          border-radius: 12px 12px 2px 12px;
-          box-shadow: 0 2px 8px rgba(73, 75, 214, 0.3);
-        }
-
-        .gzd-bubble.assistant {
-          background: #fff;
-          color: #1e293b;
-          border-radius: 12px 12px 12px 2px;
-          border: 1px solid #e2e8f0;
-          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
-        }
-
-        .gzd-bubble.streaming::after {
-          content: '▌';
-          margin-left: 1px;
-          animation: blink 1s step-start infinite;
-          color: #94a3b8;
-        }
-
-        @keyframes blink { 50% { opacity: 0; } }
-
-        .gzd-time {
-          font-size: 0.65rem;
-          color: #94a3b8;
-          margin-top: 2px;
-        }
-
-        .gzd-time.user {
-          align-self: flex-end;
-          text-align: right;
-        }
-
-        .gzd-time.assistant {
-          align-self: flex-start;
-          text-align: left;
-        }
-
-        .gzd-typing-bubble {
-          display: flex;
-          gap: 4px;
-          padding: 12px 16px;
-          align-items: center;
-        }
-
-        .gzd-typing-bubble span {
-          width: 8px;
-          height: 8px;
-          border-radius: 50%;
-          background: #94a3b8;
-          animation: typingDots 0.6s infinite;
-        }
-
-        .gzd-typing-bubble span:nth-child(1) { animation-delay: 0s; }
+        .gzd-widget-root * { box-sizing: border-box; }
+        .gzd-widget-root :is(button, input) { font-family: inherit; font-size: 14px; }
+        .gzd-widget-root :is(button, input, a):focus-visible { outline: 2px solid #494bd6; outline-offset: 3px; }
+        .gzd-widget-root button { min-height: 44px; cursor: pointer; }
+        .gzd-widget-root button:hover:not(:disabled) { background: #2a2a33; }
+        .gzd-widget-root button:disabled { background: #d3d3dc; cursor: not-allowed; }
+        .gzd-widget-root input { min-height: 44px; min-width: 0; padding: 0 12px; background: #fff; color: #121218; border: 1px solid #c8c8d2; border-radius: 6px; }
+        .gzd-widget-root input::placeholder { color: #6b6b78; }
+        .gzd-header { flex-shrink: 0; padding: 16px 20px; background: #121218; color: #f4f4f5; }
+        .gzd-name { margin: 0 0 4px; font-size: 16px; font-weight: 500; overflow-wrap: anywhere; }
+        .gzd-online { display: flex; align-items: center; gap: 8px; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #a1a1aa; }
+        .gzd-online-dot { width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: #34d399; }
+        .gzd-messages { flex: 1; min-height: 0; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; font-size: 14px; line-height: 1.5; }
+        .gzd-message-row { display: flex; min-width: 0; animation: gzd-message-in 0.2s ease; }
+        .gzd-message-row.user { justify-content: flex-end; }
+        .gzd-bubble-wrap { min-width: 0; max-width: 100%; display: flex; flex-direction: column; }
+        .gzd-message-row.user .gzd-bubble-wrap { max-width: 80%; }
+        .gzd-bubble { font-size: 14px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .gzd-bubble.user { padding: 9px 13px; background: #121218; color: #f4f4f5; border-radius: 8px; }
+        .gzd-bubble.streaming::after { content: '▌'; color: #494bd6; animation: gzd-blink 1s step-start infinite; }
+        .gzd-time { margin-top: 4px; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #6b6b78; }
+        .gzd-time.user { text-align: right; }
+        .gzd-typing-bubble { min-height: 24px; display: flex; align-items: center; gap: 4px; }
+        .gzd-typing-bubble span { width: 6px; height: 6px; border-radius: 50%; background: #6b6b78; animation: gzd-typing-dots 0.6s infinite; }
         .gzd-typing-bubble span:nth-child(2) { animation-delay: 0.15s; }
         .gzd-typing-bubble span:nth-child(3) { animation-delay: 0.3s; }
-
-        .gzd-escalation {
-          background: linear-gradient(135deg, #fffbeb, #fef3c710);
-          border: 1px solid #fde68a;
-          border-radius: var(--gzd-radius-lg);
-          padding: 14px 16px;
-          margin: 4px 0 4px 30px;
-          animation: messageIn 0.2s ease forwards;
-        }
-
-        .gzd-escalation-title {
-          font-weight: 600;
-          color: #92400e;
-          font-size: 0.875rem;
-        }
-
-        .gzd-escalation-sub {
-          color: #78350f;
-          font-size: 0.8rem;
-          margin: 4px 0 10px;
-        }
-
-        .gzd-escalation-row {
-          display: flex;
-          gap: 8px;
-        }
-
-        .gzd-escalation-input {
-          flex: 1;
-          background: #fff;
-          border: 1px solid #fcd34d;
-          border-radius: var(--gzd-radius-sm);
-          padding: 8px 10px;
-          font-size: 0.8rem;
-          outline: none;
-        }
-
-        .gzd-escalation-send {
-          background: #f59e0b;
-          color: #fff;
-          border: none;
-          border-radius: var(--gzd-radius-sm);
-          padding: 8px 14px;
-          font-weight: 600;
-          cursor: pointer;
-        }
-
-        .gzd-gate {
-          position: absolute;
-          bottom: 0;
-          left: 0;
-          right: 0;
-          background: #fff;
-          border-radius: 20px 20px 0 0;
-          padding: 24px 20px 20px;
-          box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.08);
-        }
-
-        .gzd-gate h3 {
-          font-weight: 700;
-          color: #1e293b;
-          font-size: 1rem;
-          margin-bottom: 4px;
-        }
-
-        .gzd-gate p {
-          color: #64748b;
-          font-size: 0.8rem;
-          margin-bottom: 16px;
-        }
-
-        .gzd-gate input {
-          width: 100%;
-          margin-bottom: 8px;
-          background: #f8fafc;
-          border: 1px solid #e2e8f0;
-          border-radius: var(--gzd-radius-md);
-          padding: 10px 12px;
-          font-size: 0.875rem;
-          outline: none;
-          transition: var(--gzd-transition);
-        }
-
-        .gzd-gate input:focus {
-          border-color: #6366f1;
-          box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
-        }
-
-        .gzd-gate button[type='submit'] {
-          width: 100%;
-          background: #6366f1;
-          color: #fff;
-          border: none;
-          border-radius: var(--gzd-radius-xl);
-          padding: 12px;
-          font-weight: 700;
-          font-size: 0.875rem;
-          cursor: pointer;
-          transition: var(--gzd-transition);
-        }
-
-        .gzd-gate button[type='submit']:hover {
-          opacity: 0.9;
-          transform: translateY(-1px);
-        }
-
-        .gzd-gate-skip {
-          display: block;
-          width: 100%;
-          text-align: center;
-          margin-top: 10px;
-          color: #94a3b8;
-          font-size: 0.8rem;
-          border: 0;
-          background: transparent;
-          cursor: pointer;
-          transition: var(--gzd-transition);
-        }
-
-        .gzd-gate-skip:hover {
-          color: #64748b;
-        }
-
-        .gzd-input-bar {
-          background: #fff;
-          border-top: 1px solid #f1f5f9;
-          padding: 12px 16px;
-          display: flex;
-          gap: 8px;
-          align-items: center;
-        }
-
-        .gzd-input {
-          flex: 1;
-          background: #f1f5f9;
-          border: 1px solid transparent;
-          border-radius: var(--gzd-radius-full);
-          padding: 10px 16px;
-          font-size: 0.875rem;
-          color: #1e293b;
-          outline: none;
-          transition: var(--gzd-transition);
-        }
-
-        .gzd-input::placeholder {
-          color: #94a3b8;
-        }
-
-        .gzd-input:focus {
-          background: #fff;
-          border-color: #6366f1;
-          box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
-        }
-
-        .gzd-send {
-          width: 38px;
-          height: 38px;
-          border-radius: var(--gzd-radius-full);
-          background: #6366f1;
-          border: none;
-          cursor: pointer;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          transition: var(--gzd-transition);
-        }
-
-        .gzd-send:hover {
-          transform: scale(1.05);
-        }
-
-        .gzd-send:active {
-          transform: scale(0.95);
-        }
-
-        .gzd-send:disabled {
-          background: #e2e8f0;
-          cursor: not-allowed;
-          transform: none;
-        }
-
-        .gzd-powered {
-          text-align: center;
-          padding: 8px;
-          font-size: 0.65rem;
-          color: #cbd5e1;
-          background: #fff;
-          border-top: 1px solid #f1f5f9;
-        }
-
-        .gzd-error {
-          color: #ef4444;
-          font-size: 0.75rem;
-          margin-top: 6px;
-        }
-
-        .gzd-debug {
-          margin-top: 6px;
-          display: inline-block;
-          padding: 2px 7px;
-          border-radius: 999px;
-          background: #eef2ff;
-          color: #4f46e5;
-          font-size: 0.65rem;
-          font-weight: 600;
-        }
-
-        @keyframes pulseRing {
-          0% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.7); }
-          70% { box-shadow: 0 0 0 6px rgba(74, 222, 128, 0); }
-          100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); }
-        }
-
-        @keyframes typingDots {
-          0%, 60%, 100% { transform: translateY(0); }
-          30% { transform: translateY(-5px); }
-        }
-
-        @keyframes messageIn {
-          from { opacity: 0; transform: translateY(6px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-
-        .gzd-citations {
-          margin-top: 6px;
-          padding: 8px 10px;
-          background: #f8fafc;
-          border: 1px solid #e2e8f0;
-          border-radius: 8px;
-          display: flex;
-          flex-direction: column;
-          gap: 4px;
-        }
-
-        .gzd-citations-label {
-          font-size: 0.6rem;
-          font-weight: 700;
-          letter-spacing: 0.05em;
-          text-transform: uppercase;
-          color: #94a3b8;
-        }
-
-        .gzd-citation {
-          font-size: 0.7rem;
-          color: #475569;
-          line-height: 1.35;
-        }
-
-        .gzd-citation-text {
-          display: block;
-        }
-
-        .gzd-citation-src {
-          display: block;
-          margin-top: 2px;
-          font-size: 0.62rem;
-          color: #6366f1;
-          word-break: break-all;
+        .gzd-escalation { margin-top: 12px; border: 1px solid #e4e4ea; border-radius: 6px; padding: 14px; display: flex; flex-direction: column; gap: 8px; animation: gzd-message-in 0.2s ease; }
+        .gzd-escalation-title { font-size: 14px; font-weight: 500; }
+        .gzd-escalation-sub { margin: 0; font-size: 13px; line-height: 1.45; color: #5c5c68; }
+        .gzd-escalation-row { display: flex; gap: 8px; }
+        .gzd-escalation-input { flex: 1; width: 0; }
+        .gzd-escalation-send { padding: 0 14px; background: #121218; color: #fff; border: 0; border-radius: 6px; font-weight: 600; }
+        .gzd-gate { flex-shrink: 0; max-height: calc(100% - 78px); overflow-y: auto; padding: 20px; border-top: 1px solid #e4e4ea; display: flex; flex-direction: column; gap: 6px; }
+        .gzd-gate h2 { margin: 0; font-size: 18px; font-weight: 500; letter-spacing: -0.01em; }
+        .gzd-gate p { margin: 0 0 10px; font-size: 13px; line-height: 1.45; color: #5c5c68; }
+        .gzd-gate label { font-size: 13px; color: #5c5c68; }
+        .gzd-gate input { flex-shrink: 0; width: 100%; margin-bottom: 8px; }
+        .gzd-gate input[type='email'] { margin-bottom: 12px; }
+        .gzd-gate button { flex-shrink: 0; }
+        .gzd-gate button[type='submit'] { background: #121218; color: #fff; border: 0; border-radius: 6px; font-weight: 600; }
+        .gzd-gate-skip { background: transparent; color: #5c5c68; border: 0; font-size: 13px; }
+        .gzd-widget-root .gzd-gate-skip:hover { background: #f4f4f5; }
+        .gzd-input-bar { flex-shrink: 0; padding: 12px 16px; border-top: 1px solid #e4e4ea; display: flex; gap: 8px; }
+        .gzd-input { flex: 1; width: 0; }
+        .gzd-send { flex: 0 0 44px; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; background: #121218; border: 0; border-radius: 6px; }
+        .gzd-powered { flex-shrink: 0; margin: 0; padding: 0 16px 10px; text-align: center; font-size: 11px; color: #5c5c68; }
+        .gzd-error { margin: 0 16px 10px; color: #b91c1c; font-size: 12px; overflow-wrap: anywhere; }
+        .gzd-gate .gzd-error { margin: 0; color: #b91c1c; }
+        .gzd-debug { margin-top: 6px; width: fit-content; max-width: 100%; padding: 2px 7px; border-radius: 4px; background: #eef2ff; color: #494bd6; font-family: 'JetBrains Mono', monospace; font-size: 10px; }
+        .gzd-citations { margin-top: 10px; border: 1px solid #e4e4ea; border-radius: 6px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; font-size: 12px; line-height: 1.45; color: #5c5c68; }
+        .gzd-citations-label { font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+        .gzd-citation-text { display: block; overflow-wrap: anywhere; }
+        .gzd-citation-src { display: block; margin-top: 2px; font-family: 'JetBrains Mono', monospace; color: #494bd6; overflow-wrap: anywhere; }
+        @keyframes gzd-blink { 50% { opacity: 0; } }
+        @keyframes gzd-typing-dots { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-4px); } }
+        @keyframes gzd-message-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+        @media (prefers-reduced-motion: reduce) {
+          .gzd-widget-root *, .gzd-bubble.streaming::after { animation: none; transition: none; }
         }
       `}</style>
 
       <header className="gzd-header">
-        <div>
-          <div className="gzd-online">
-            <span className="gzd-online-dot" />
-            <span>Online now</span>
-          </div>
-          <div className="gzd-name">{businessName}</div>
-          <div className="gzd-subname">Typically replies instantly</div>
-        </div>
-
-        <div className="gzd-header-avatar" aria-hidden="true">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-            <rect x="4" y="7" width="16" height="10" rx="3" stroke="currentColor" strokeWidth="1.8" />
-            <circle cx="9" cy="12" r="1.2" fill="currentColor" />
-            <circle cx="15" cy="12" r="1.2" fill="currentColor" />
-            <path d="M12 3v2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-            <path d="M8 20h8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-          </svg>
+        <div className="gzd-name">{businessName}</div>
+        <div className="gzd-online">
+          <span className="gzd-online-dot" aria-hidden="true" />
+          <span>online</span>
         </div>
       </header>
 
@@ -782,9 +383,6 @@ export default function EmbeddableWidget({ businessId }) {
           return (
             <div key={msg.id || `${msg.role}-${i}-${msg.content.slice(0, 20)}`}>
               <div className={`gzd-message-row ${isUser ? 'user' : 'assistant'}`}>
-                {!isUser && (
-                  <div className={`gzd-assistant-avatar ${showAssistantAvatar ? '' : 'placeholder'}`}>✦</div>
-                )}
                 <div className="gzd-bubble-wrap">
                   <div className={`gzd-bubble ${isUser ? 'user' : 'assistant'}${msg.streaming ? ' streaming' : ''}`}>
                     {msg.content}
@@ -797,10 +395,11 @@ export default function EmbeddableWidget({ businessId }) {
 
               {!isUser && msg.escalated && !leadCaptured && !escalationSubmitted && (
                 <form className="gzd-escalation" onSubmit={submitEscalationLead}>
-                  <div className="gzd-escalation-title">✉️ Want a follow-up?</div>
+                  <label className="gzd-escalation-title" htmlFor={`gzd-followup-${i}`}>Want a follow-up?</label>
                   <div className="gzd-escalation-sub">Leave your email and we&apos;ll get back to you.</div>
                   <div className="gzd-escalation-row">
                     <input
+                      id={`gzd-followup-${i}`}
                       className="gzd-escalation-input"
                       type="email"
                       placeholder="you@example.com"
@@ -821,23 +420,26 @@ export default function EmbeddableWidget({ businessId }) {
 
       {shouldShowGate ? (
         <form className="gzd-gate" onSubmit={startChat}>
-          <h3>Before we start...</h3>
+          <h2>Before we start</h2>
           <p>Leave your details so we can follow up if needed.</p>
+          <label htmlFor="gzd-name">Name (optional)</label>
           <input
-            placeholder="Your name (optional)"
+            id="gzd-name"
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
+          <label htmlFor="gzd-email">Email</label>
           <input
+            id="gzd-email"
             type="email"
-            placeholder="your@email.com"
+            placeholder="you@example.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
           />
-          <button type="submit">Start chatting →</button>
+          <button type="submit">Start chatting</button>
           <button className="gzd-gate-skip" type="button" onClick={skipLeadCapture}>Skip for now</button>
-          {error && <p className="gzd-error">{error}</p>}
+          {error && <p className="gzd-error" role="alert">{error}</p>}
         </form>
       ) : (
         <>
@@ -845,19 +447,20 @@ export default function EmbeddableWidget({ businessId }) {
             <input
               ref={inputRef}
               className="gzd-input"
-              placeholder="Type your message..."
+              placeholder="Type your message"
+              aria-label="Message"
               value={message}
               onChange={(e) => setMessage(e.target.value)}
             />
             <button className="gzd-send" type="submit" disabled={!message.trim()} aria-label="Send message">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M5 12H19" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                 <path d="M13 6L19 12L13 18" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </button>
           </form>
-          <div className="gzd-powered">⚡ Powered by Glazed</div>
-          {error && <p className="gzd-error" style={{ margin: '0 16px 10px' }}>{error}</p>}
+          <div className="gzd-powered">Powered by Glazed</div>
+          {error && <p className="gzd-error" role="alert">{error}</p>}
         </>
       )}
     </div>
