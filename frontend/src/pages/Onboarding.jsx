@@ -247,600 +247,348 @@ export default function Onboarding() {
   return (
     <main className="ob2-page">
       <style>{`
-        .ob2-page {
-          min-height: 100vh;
-          background: #0e0e0e;
-          position: relative;
-          overflow: hidden;
-          color: #fff;
-          font-family: 'Manrope', sans-serif;
+        .ob2-page { min-height: 100vh; background: #fff; color: #121218; font-family: Inter, sans-serif; }
+        .ob2-page a { color: inherit; text-decoration: none; }
+        .ob2-page a:hover { color: #494bd6; }
+        .ob2-dark a:hover, .ob2-card a, .ob2-card a:hover { color: #c0c1ff; }
+        .ob2-page :is(a, button, input):focus-visible { outline: 3px solid #8083ff; outline-offset: 4px; }
+        .ob2-page :is(section[id], article[id], div[id]) { scroll-margin-top: 24px; }
+        .ob2-tick { position: relative; }
+        .ob2-tick::before, .ob2-tick::after { content: ''; position: absolute; top: -5px; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; }
+        .ob2-tick::before { left: 0; border-left: 5px solid #d3d3dc; }
+        .ob2-tick::after { right: 0; border-right: 5px solid #d3d3dc; }
+        .ob2-dark .ob2-tick::before { border-left-color: #3a3a46; }
+        .ob2-dark .ob2-tick::after { border-right-color: #3a3a46; }
+        .ob2-card { flex: 0 1 440px; min-width: 0; background: #121218; color: #f4f4f5; border-radius: 12px; padding: 32px; display: flex; flex-direction: column; }
+        .ob2-form { gap: 8px; }
+        .ob2-card h2 { margin: 0; font-size: 24px; font-weight: 500; letter-spacing: -.02em; }
+        .ob2-form h2 { margin-bottom: 16px; }
+        .ob2-meta { margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #a1a1aa; }
+        .ob2-form > .ob2-meta:first-child { margin-bottom: 4px; }
+        .ob2-card label { font-size: 13px; color: #a1a1aa; }
+        .ob2-card input { width: 100%; min-width: 0; height: 46px; margin-bottom: 12px; padding: 0 14px; background: #1b1b22; color: #f4f4f5; border: 1px solid #33333e; border-radius: 6px; font: inherit; font-size: 14px; }
+        .ob2-card input::placeholder { color: #8a8a96; }
+        .ob2-card input.ob2-url { margin-bottom: 16px; font-family: 'JetBrains Mono', monospace; font-size: 13px; }
+        .ob2-card input[aria-invalid="true"] { border-color: #f87171; margin-bottom: 0; }
+        .ob2-card button { font-family: inherit; cursor: pointer; border-radius: 6px; }
+        .ob2-submit, .ob2-secondary { min-height: 46px; padding: 10px 14px; font-size: 14px; font-weight: 600; }
+        .ob2-submit { border: 0; background: #f4f4f5; color: #121218; }
+        .ob2-submit:hover { background: #dcdce7; }
+        .ob2-submit:disabled { opacity: .6; cursor: wait; }
+        .ob2-note { margin: 8px 0 0; font-size: 12px; line-height: 1.5; color: #a1a1aa; }
+        .ob2-error { margin: 0 0 12px; color: #f87171; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+        .ob2-progress { gap: 12px; }
+        .ob2-progress h2 { font-size: 22px; }
+        .ob2-status { display: flex; align-items: center; gap: 8px; }
+        .ob2-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+        .ob2-progress-track { height: 4px; background: #2a2a33; border-radius: 2px; overflow: hidden; margin-top: 8px; }
+        .ob2-secondary { margin-top: 8px; background: transparent; color: #f4f4f5; border: 1px solid #33333e; }
+        .ob2-embed-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; font-size: 13px; color: #a1a1aa; }
+        .ob2-copy { min-height: 44px; padding: 0 12px; background: transparent; color: #c0c1ff; border: 1px solid #33333e; font-size: 13px; }
+        .ob2-code { margin: 0; padding: 14px; background: #1b1b22; border: 1px solid #33333e; border-radius: 6px; font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .ob2-page .ob2-test { padding: 12px 0; text-align: center; font-size: 14px; color: #c0c1ff; }
+        @media (max-width: 1040px) { .ob2-rail { display: none !important; } }
+        @media (max-width: 600px) {
+          .ob2-page header, .ob2-page section, .ob2-page article, .ob2-page footer > div { padding-left: 16px !important; padding-right: 16px !important; }
+          .ob2-card { flex-basis: 100%; padding: 24px; }
+          .ob2-page header { gap: 8px 16px !important; }
+          .ob2-page header nav { gap: 4px 16px !important; }
         }
-
-        .ob2-mesh {
-          position: fixed;
-          inset: 0;
-          z-index: 0;
-          opacity: 0.06;
-          animation: drift 20s ease-in-out infinite;
-          pointer-events: none;
-        }
-
-        .ob2-navbar {
-          position: fixed;
-          top: 0;
-          left: 0;
-          right: 0;
-          z-index: 10;
-          padding: 16px 32px;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          background: rgba(14, 14, 14, 0.8);
-          backdrop-filter: blur(12px);
-        }
-
-        .ob2-brand {
-          font-family: 'Manrope', sans-serif;
-          font-weight: 700;
-          font-size: 1rem;
-          color: #fff;
-        }
-
-        .ob2-help {
-          width: 28px;
-          height: 28px;
-          border-radius: 50%;
-          border: none;
-          background: rgba(255, 255, 255, 0.08);
-          color: rgba(255, 255, 255, 0.5);
-          font-weight: 700;
-          cursor: pointer;
-          transition: all 300ms cubic-bezier(0.4, 0, 0.2, 1);
-        }
-
-        .ob2-help:hover {
-          background: rgba(255, 255, 255, 0.12);
-        }
-
-        .ob2-main {
-          padding-top: 80px;
-          min-height: 100vh;
-          max-width: 1100px;
-          margin: 0 auto;
-          padding-left: 48px;
-          padding-right: 48px;
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 80px;
-          align-items: center;
-          position: relative;
-          z-index: 1;
-        }
-
-        .ob2-left h1 {
-          font-family: 'Manrope', sans-serif;
-          font-weight: 800;
-          font-size: clamp(2.5rem, 4vw, 3.5rem);
-          letter-spacing: -0.03em;
-          line-height: 1.1;
-          margin-bottom: 24px;
-        }
-
-        .ob2-left h1 span {
-          display: block;
-        }
-
-        .ob2-highlight {
-          color: #c0c1ff;
-          font-style: italic;
-        }
-
-        .ob2-subtext {
-          color: rgba(255, 255, 255, 0.5);
-          font-size: 1rem;
-          line-height: 1.6;
-          max-width: 380px;
-          margin-bottom: 40px;
-        }
-
-        .ob2-feature {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          margin-bottom: 16px;
-        }
-
-        .ob2-feature-icon {
-          width: 24px;
-          height: 24px;
-          border-radius: 50%;
-          background: rgba(99, 102, 241, 0.2);
-          border: 1px solid rgba(99, 102, 241, 0.4);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          flex-shrink: 0;
-        }
-
-        .ob2-feature-text {
-          color: rgba(255, 255, 255, 0.75);
-          font-size: 0.95rem;
-          font-weight: 500;
-        }
-
-        .ob2-card {
-          background: rgba(28, 27, 27, 0.95);
-          border: 1px solid rgba(255, 255, 255, 0.06);
-          border-radius: 24px;
-          padding: 36px;
-          backdrop-filter: blur(20px);
-          box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
-          position: relative;
-          z-index: 2;
-        }
-
-        .ob2-card-title {
-          font-family: 'Manrope', sans-serif;
-          font-weight: 700;
-          font-size: 1.4rem;
-          color: #fff;
-          margin-bottom: 6px;
-        }
-
-        .ob2-card-subtitle {
-          color: rgba(255, 255, 255, 0.4);
-          font-size: 0.875rem;
-          margin-bottom: 28px;
-          line-height: 1.5;
-        }
-
-        .ob2-label {
-          font-size: 0.7rem;
-          font-weight: 700;
-          letter-spacing: 0.12em;
-          text-transform: uppercase;
-          color: rgba(255, 255, 255, 0.5);
-          margin-bottom: 8px;
-          display: block;
-        }
-
-        .ob2-input {
-          background: #252525;
-          border: 1px solid rgba(255, 255, 255, 0.06);
-          border-radius: 12px;
-          padding: 14px 16px;
-          color: #fff;
-          font-size: 0.9rem;
-          width: 100%;
-          margin-bottom: 20px;
-          outline: none;
-          transition: all 300ms cubic-bezier(0.4, 0, 0.2, 1);
-        }
-
-        .ob2-input:focus {
-          border-color: rgba(99, 102, 241, 0.5);
-          box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
-        }
-
-        .ob2-input-error {
-          border-color: rgba(248, 113, 113, 0.5);
-        }
-
-        .ob2-url-wrap {
-          position: relative;
-        }
-
-        .ob2-url-wrap .ob2-input {
-          padding-right: 44px;
-        }
-
-        .ob2-url-icon {
-          position: absolute;
-          right: 14px;
-          top: 50%;
-          transform: translateY(calc(-50% - 10px));
-          color: rgba(255, 255, 255, 0.3);
-          width: 16px;
-          height: 16px;
-          pointer-events: none;
-        }
-
-        .ob2-error {
-          color: #f87171;
-          font-size: 0.75rem;
-          margin-top: -12px;
-          margin-bottom: 14px;
-        }
-
-        .ob2-submit {
-          background: linear-gradient(135deg, #7c7fff 0%, #6366f1 100%);
-          color: #fff;
-          border: none;
-          border-radius: 999px;
-          padding: 15px 24px;
-          width: 100%;
-          font-weight: 700;
-          font-size: 0.95rem;
-          cursor: pointer;
-          margin-top: 4px;
-          transition: all 300ms cubic-bezier(0.4, 0, 0.2, 1);
-        }
-
-        .ob2-submit:hover {
-          background: linear-gradient(135deg, #9091ff, #7274f3);
-          transform: translateY(-1px);
-          box-shadow: 0 8px 24px rgba(99, 102, 241, 0.35);
-        }
-
-        .ob2-submit:disabled {
-          opacity: 0.75;
-          cursor: not-allowed;
-          transform: none;
-        }
-
-        .ob2-meta {
-          margin-top: 12px;
-          font-size: 0.75rem;
-          color: rgba(255, 255, 255, 0.45);
-        }
-
-        .ob2-progress-head {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 14px;
-        }
-
-        .ob2-preview-label {
-          color: rgba(255, 255, 255, 0.5);
-          font-size: 0.8rem;
-        }
-
-        .ob2-live-badge {
-          background: rgba(99, 102, 241, 0.15);
-          color: #c0c1ff;
-          border: 1px solid rgba(99, 102, 241, 0.3);
-          border-radius: 999px;
-          padding: 3px 10px;
-          font-size: 0.65rem;
-          font-weight: 700;
-          letter-spacing: 0.1em;
-        }
-
-        .ob2-status-row {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 8px;
-          min-height: 24px;
-        }
-
-        .ob2-indexing {
-          color: #c0c1ff;
-          font-size: 0.85rem;
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-        }
-
-        .ob2-spin-star {
-          display: inline-block;
-          animation: spin 2s linear infinite;
-        }
-
-        .ob2-confetti {
-          font-size: 1rem;
-        }
-
-        .ob2-progress-track {
-          background: rgba(255, 255, 255, 0.08);
-          height: 6px;
-          border-radius: 3px;
-          margin: 10px 0 16px;
-          overflow: hidden;
-        }
-
-        .ob2-progress-fill {
-          background: linear-gradient(90deg, #6366f1, #c0c1ff);
-          height: 100%;
-          border-radius: 3px;
-          width: 100%;
-          transform: scaleX(0);
-          transform-origin: left;
-          transition: transform 0.6s ease;
-        }
-
-        .ob2-progress-text {
-          font-size: 0.7rem;
-          font-weight: 700;
-          letter-spacing: 0.1em;
-          color: rgba(255, 255, 255, 0.4);
-          text-transform: uppercase;
-        }
-
-        .ob2-progress-label {
-          margin-top: 10px;
-          color: rgba(255, 255, 255, 0.5);
-          font-size: 0.8rem;
-        }
-
-        .ob2-divider {
-          border-top: 1px solid rgba(255, 255, 255, 0.06);
-          margin: 20px 0;
-        }
-
-        .ob2-embed-row {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          gap: 12px;
-        }
-
-        .ob2-embed-label {
-          color: #fff;
-          font-size: 0.875rem;
-          font-weight: 600;
-        }
-
-        .ob2-copy {
-          background: transparent;
-          color: #c0c1ff;
-          font-size: 0.8rem;
-          border: none;
-          cursor: pointer;
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          white-space: nowrap;
-        }
-
-        .ob2-code {
-          background: #151515;
-          border: 1px solid rgba(255, 255, 255, 0.06);
-          border-radius: 12px;
-          padding: 16px;
-          margin-top: 10px;
-          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-          font-size: 0.8rem;
-          color: rgba(255, 255, 255, 0.7);
-          line-height: 1.6;
-          word-break: break-all;
-        }
-
-        .ob2-actions {
-          margin-top: 14px;
-          display: grid;
-          gap: 10px;
-        }
-
-        .ob2-secondary {
-          border: 1px solid rgba(255, 255, 255, 0.08);
-          border-radius: 999px;
-          background: transparent;
-          color: rgba(255, 255, 255, 0.8);
-          padding: 12px 20px;
-          font-weight: 600;
-          cursor: pointer;
-          transition: all 300ms cubic-bezier(0.4, 0, 0.2, 1);
-        }
-
-        .ob2-secondary:hover {
-          border-color: rgba(255, 255, 255, 0.16);
-          color: #fff;
-        }
-
-        .ob2-link {
-          color: #c0c1ff;
-          text-decoration: none;
-          font-size: 0.86rem;
-          text-align: center;
-        }
-
-        .ob2-link:hover {
-          text-decoration: underline;
-        }
-
-        @keyframes drift {
-          0% { transform: translateX(0) translateY(0); }
-          50% { transform: translateX(-20px) translateY(-10px); }
-          100% { transform: translateX(0) translateY(0); }
-        }
-
-        @keyframes spin {
-          to { transform: rotate(360deg); }
-        }
-
-        @media (max-width: 768px) {
-          .ob2-main {
-            grid-template-columns: 1fr;
-            gap: 24px;
-            padding-left: 16px;
-            padding-right: 16px;
-            align-content: center;
-          }
-
-          .ob2-left {
-            display: none;
-          }
-
-          .ob2-card {
-            width: 100%;
-            padding: 24px;
-          }
-
-          .ob2-card-title {
-            font-size: 1.2rem;
-          }
-
-          .ob2-card-subtitle {
-            font-size: 0.82rem;
-          }
-        }
+        @media (prefers-reduced-motion: reduce) { .ob2-trace * { transition: none !important; } }
       `}</style>
+<div style={{"fontFamily": "Inter, sans-serif", "color": "#121218", "background": "#ffffff", "minWidth": "0"}}>
 
-      <svg className="ob2-mesh" viewBox="0 0 1200 800" preserveAspectRatio="none" aria-hidden="true">
-        <g fill="none" stroke="#9ca3af" strokeWidth="1">
-          <path d="M-20 120 C 220 10, 360 230, 640 120 C 850 40, 1020 180, 1240 90" />
-          <path d="M-50 220 C 220 130, 390 350, 670 220 C 890 120, 1070 310, 1250 210" />
-          <path d="M-30 340 C 230 250, 430 470, 700 350 C 930 240, 1080 430, 1260 330" />
-          <path d="M-40 460 C 260 360, 430 600, 730 470 C 960 360, 1120 560, 1280 430" />
-          <path d="M-20 600 C 250 510, 450 700, 760 590 C 980 510, 1130 700, 1290 600" />
-        </g>
-      </svg>
+  <div style={{"maxWidth": "1440px", "margin": "0 auto", "borderLeft": "1px solid #e4e4ea", "borderRight": "1px solid #e4e4ea", "boxSizing": "border-box"}}>
 
-      <header className="ob2-navbar">
-        <div className="ob2-brand">Glazed AI</div>
-        <button className="ob2-help" type="button" aria-label="Help">?</button>
-      </header>
+    <header style={{"display": "flex", "flexWrap": "wrap", "alignItems": "center", "justifyContent": "space-between", "gap": "8px 24px", "padding": "12px 32px"}}>
+      <a href="#start" style={{"fontWeight": "600", "fontSize": "18px", "letterSpacing": "-0.02em", "padding": "10px 0"}}>Glazed AI</a>
+      <nav aria-label="Primary" style={{"display": "flex", "flexWrap": "wrap", "alignItems": "center", "gap": "4px 24px", "fontSize": "14px"}}>
+        <a href="#features" style={{"padding": "13px 0"}}>Features</a>
+        <a href="#self-host" style={{"padding": "13px 0"}}>Self-host</a>
+        <a href="https://github.com/agilap/OpenGlazed" style={{"padding": "13px 0"}}>GitHub</a>
+      </nav>
+    </header>
 
-      <section className="ob2-main">
-        <aside className="ob2-left">
-          <h1>
-            <span>Power your</span>
-            <span className="ob2-highlight">Intelligence</span>
-            <span>engine.</span>
-          </h1>
+    <section className="ob2-tick" style={{"borderTop": "1px solid #e4e4ea", "padding": "72px 32px 64px", "display": "flex", "flexDirection": "column", "alignItems": "center"}}>
+      <p style={{"margin": "0 0 28px", "display": "inline-flex", "alignItems": "center", "gap": "8px", "border": "1px solid #e4e4ea", "borderRadius": "6px", "padding": "6px 12px", "fontFamily": "'JetBrains Mono', monospace", "fontSize": "12px", "color": "#5c5c68"}}>
+        <span aria-hidden="true" style={{"width": "6px", "height": "6px", "borderRadius": "50%", "background": "#34d399"}}></span>
+        self-hosted <span aria-hidden="true">/</span> <span style={{"color": "#121218"}}>your data</span>
+      </p>
+      <h1 style={{"margin": "0", "textAlign": "center", "fontSize": "clamp(44px, 6vw, 80px)", "lineHeight": "1.04", "letterSpacing": "-0.045em", "fontWeight": "500"}}>
+        Your website's agent,<br /><span style={{"color": "#494bd6"}}>on your own stack</span>
+      </h1>
+      <p style={{"margin": "24px 0 28px", "maxWidth": "600px", "textAlign": "center", "fontSize": "18px", "lineHeight": "1.5", "color": "#5c5c68"}}>
+        Point it at a URL. Get a chat assistant that answers from your content, cites its sources, and runs on your models and your Postgres.
+      </p>
+      <a href="#start" style={{"display": "inline-flex", "alignItems": "center", "height": "46px", "padding": "0 20px", "marginBottom": "40px", "background": "#121218", "color": "#fff", "borderRadius": "6px", "fontSize": "14px", "fontWeight": "600"}}>Index your site</a>
 
-          <p className="ob2-subtext">
-            Connect your brand identity and let our AI scrape, index,
-            and generate your custom sales intelligence brain in seconds.
-          </p>
+      <div style={{"width": "100%"}}>
+        <RetrievalTrace />
+      </div>
+    </section>
 
-          <div className="ob2-feature">
-            <span className="ob2-feature-icon" aria-hidden="true">
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M2 6.5L4.5 9L10 3" stroke="#c0c1ff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </span>
-            <span className="ob2-feature-text">Instant Brand Scraping</span>
+    <section id="start" className="ob2-tick" style={{"borderTop": "1px solid #e4e4ea", "padding": "72px 32px", "display": "flex", "flexWrap": "wrap", "alignItems": "center", "justifyContent": "center", "gap": "48px 96px"}}>
+      <div style={{"flex": "1 1 320px", "maxWidth": "440px"}}>
+        <p style={{"margin": "0 0 16px", "fontFamily": "'JetBrains Mono', monospace", "fontSize": "11px", "letterSpacing": "0.08em", "color": "#5c5c68"}}>GET STARTED</p>
+        <h2 style={{"margin": "0 0 16px", "fontSize": "clamp(32px, 4vw, 44px)", "fontWeight": "500", "letterSpacing": "-0.035em", "lineHeight": "1.1"}}>Fill the layers with your content</h2>
+        <p style={{"margin": "0", "fontSize": "16px", "lineHeight": "1.55", "color": "#5c5c68"}}>Give it a name and a URL. Ingest builds every layer below the agent, and progress shows here as it runs.</p>
+      </div>
+
+        {!showProgress ? (
+          <form className="ob2-card ob2-form" onSubmit={handleSubmit}>
+            <p className="ob2-meta">// configure source</p>
+            <h2>Index your site</h2>
+            <label htmlFor="business-name">Business name</label>
+            <input id="business-name" placeholder="Acme Inc." value={name} onChange={(e) => setName(e.target.value)} required />
+            <label htmlFor="business-url">Website URL</label>
+            <input id="business-url" className="ob2-url" placeholder="https://example.com" value={url}
+              onChange={(e) => { setUrl(e.target.value); if (urlError) setUrlError(''); }}
+              aria-invalid={Boolean(urlError)} aria-describedby={urlError ? 'business-url-error' : undefined} required />
+            {urlError && <p id="business-url-error" className="ob2-error" role="alert">{urlError}</p>}
+            <button className="ob2-submit" type="submit" disabled={loading}>{loading ? 'Creating...' : 'Start scraping'}</button>
+            <p className="ob2-note">Scrapes, chunks and embeds your pages, then hands you an embed snippet.</p>
+            {status && <p className="ob2-meta" role="status">{status}</p>}
+            {result?.error && <p className="ob2-error" role="alert">{result.error}</p>}
+          </form>
+        ) : (
+          <div className="ob2-card ob2-progress" aria-live="polite">
+            <p className="ob2-meta ob2-status"><span className="ob2-dot" aria-hidden="true" style={{ background: ingest.status === 'error' ? '#f87171' : ingest.status === 'active' ? '#34d399' : '#fbbf24' }} />ingest / {ingest.status === 'error' ? 'error' : ingest.status === 'active' ? 'ready' : 'running'}</p>
+            <h2>{ingest.status === 'active' ? 'Indexing complete' : ingest.status === 'error' ? ingestErrorMessage : progressLabel}</h2>
+            {ingest.status !== 'error' && ingest.status !== 'active' && <>
+              <div className="ob2-progress-track" role="progressbar" aria-label="Ingest progress" aria-valuenow={progressValue} aria-valuemin={0} aria-valuemax={100}>
+                <div style={{ width: `${progressValue}%`, height: '100%', background: '#c0c1ff' }} />
+              </div>
+              <p className="ob2-meta">{progressValue}% complete</p>
+            </>}
+            {ingest.status === 'error' && <button className="ob2-secondary" type="button" onClick={resetToForm}>Try again</button>}
+            {ingest.status === 'active' && <>
+              <div className="ob2-embed-row"><span>Embed snippet</span><button className="ob2-copy" type="button" onClick={handleCopy}>{copyLabel}</button></div>
+              <pre className="ob2-code">{embedSnippet}</pre>
+              <button className="ob2-submit" type="button" onClick={() => navigate(`/dashboard/${result.businessId}`)}>Open dashboard</button>
+              <a className="ob2-test" href={`/embed/${businessId}`} target="_blank" rel="noopener noreferrer">Test your chatbot →</a>
+            </>}
+            {result?.error && <p className="ob2-error" role="alert">{result.error}</p>}
           </div>
+        )}
+    </section>
 
-          <div className="ob2-feature">
-            <span className="ob2-feature-icon" aria-hidden="true">
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M2 6.5L4.5 9L10 3" stroke="#c0c1ff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </span>
-            <span className="ob2-feature-text">Neural Knowledge Indexing</span>
-          </div>
-        </aside>
+    <section className="ob2-tick" style={{"borderTop": "1px solid #e4e4ea", "padding": "36px 32px", "display": "flex", "flexDirection": "column", "alignItems": "center", "gap": "20px"}}>
+      <p style={{"margin": "0", "fontSize": "15px"}}>Works with any OpenAI-compatible API</p>
+      <ul style={{"listStyle": "none", "margin": "0", "padding": "0", "display": "flex", "flexWrap": "wrap", "justifyContent": "center", "gap": "8px 40px", "fontFamily": "'JetBrains Mono', monospace", "fontSize": "14px", "color": "#5c5c68"}}>
+        <li>OpenAI</li><li>OpenRouter</li><li>Groq</li><li>Gemini</li><li>Anthropic</li><li>vLLM</li><li>Ollama</li>
+      </ul>
+    </section>
+  </div>
 
-        <section className="ob2-card">
-          {!showProgress ? (
-            <form onSubmit={handleSubmit}>
-              <h2 className="ob2-card-title">Configure Source</h2>
-              <p className="ob2-card-subtitle">Enter your business details to begin the ingestion process.</p>
+  <div className="ob2-dark" id="features" style={{"background": "#0e0e12", "color": "#f4f4f5"}}>
+    <div style={{"maxWidth": "1440px", "margin": "0 auto", "borderLeft": "1px solid #2a2a33", "borderRight": "1px solid #2a2a33", "boxSizing": "border-box"}}>
+      <p style={{"margin": "0", "padding": "18px 32px", "fontFamily": "'JetBrains Mono', monospace", "fontSize": "12px", "color": "#f4f4f5"}}>features</p>
 
-              <label htmlFor="business-name" className="ob2-label">Business Name</label>
-              <input
-                id="business-name"
-                className="ob2-input"
-                placeholder="Acme Inc."
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
-              />
-
-              <label htmlFor="business-url" className="ob2-label">Website URL</label>
-              <div className="ob2-url-wrap">
-                <input
-                  id="business-url"
-                  className={`ob2-input ${urlError ? 'ob2-input-error' : ''}`}
-                  placeholder="https://example.com"
-                  value={url}
-                  onChange={(e) => {
-                    setUrl(e.target.value);
-                    if (urlError) {
-                      setUrlError('');
-                    }
-                  }}
-                  required
-                />
-                <svg className="ob2-url-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                  <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.6" />
-                  <path d="M3 12H21" stroke="currentColor" strokeWidth="1.6" />
-                  <path d="M12 3C14.5 5.4 16 8.6 16 12C16 15.4 14.5 18.6 12 21" stroke="currentColor" strokeWidth="1.6" />
-                  <path d="M12 3C9.5 5.4 8 8.6 8 12C8 15.4 9.5 18.6 12 21" stroke="currentColor" strokeWidth="1.6" />
-                </svg>
-              </div>
-
-              {urlError && <p className="ob2-error">{urlError}</p>}
-
-              <button className="ob2-submit" type="submit" disabled={loading}>
-                {loading ? 'Creating...' : 'Start Scraping 🚀'}
-              </button>
-
-              {status && <p className="ob2-meta">{status}</p>}
-              {result?.error && <p className="ob2-error">{result.error}</p>}
-            </form>
-          ) : (
-            <div>
-              <div className="ob2-progress-head">
-                <span className="ob2-preview-label">Success state preview</span>
-                <span className="ob2-live-badge">LIVE PREVIEW</span>
-              </div>
-
-              <div className="ob2-status-row">
-                <span className="ob2-indexing">
-                  <span className="ob2-spin-star">✦</span>
-                  {ingest.status === 'active' ? 'Indexing complete' : 'Indexing brain...'}
-                </span>
-                {progressValue >= 100 && <span className="ob2-confetti" aria-label="complete">🎉</span>}
-              </div>
-
-              <div className="ob2-progress-track" role="progressbar" aria-valuenow={progressValue}>
-                <div className="ob2-progress-fill" style={{ transform: `scaleX(${progressValue / 100})` }} />
-              </div>
-
-              <p className="ob2-progress-text">STATUS: {progressValue}% COMPLETE</p>
-              <p className="ob2-progress-label">{progressLabel}</p>
-
-              {ingest.status === 'error' && (
-                <>
-                  <p className="ob2-error" style={{ marginTop: '12px', marginBottom: '14px' }}>{ingestErrorMessage}</p>
-                  <button className="ob2-secondary" type="button" onClick={resetToForm}>
-                    Try Again
-                  </button>
-                </>
-              )}
-
-              {ingest.status === 'active' && (
-                <>
-                  <div className="ob2-divider" />
-                  <div className="ob2-embed-row">
-                    <span className="ob2-embed-label">Embed Snippet</span>
-                    <button className="ob2-copy" type="button" onClick={handleCopy}>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                        <rect x="9" y="9" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="1.6" />
-                        <rect x="4" y="4" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="1.6" />
-                      </svg>
-                      {copyLabel}
-                    </button>
-                  </div>
-
-                  <pre className="ob2-code">{embedSnippet}</pre>
-
-                  <div className="ob2-actions">
-                    <button className="ob2-submit" type="button" onClick={() => navigate(`/dashboard/${result.businessId}`)}>
-                      Open Dashboard
-                    </button>
-                    <a
-                      href={`/embed/${businessId}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="ob2-link"
-                    >
-                      Test your chatbot →
-                    </a>
-                  </div>
-                </>
-              )}
-
-              {result?.error && <p className="ob2-error" style={{ marginTop: '12px' }}>{result.error}</p>}
-            </div>
-          )}
-        </section>
+      <section className="ob2-tick" style={{"borderTop": "1px solid #2a2a33", "padding": "72px 32px"}}>
+        <h2 style={{"margin": "0 0 20px", "fontSize": "clamp(36px, 4vw, 52px)", "fontWeight": "500", "letterSpacing": "-0.035em", "lineHeight": "1.1"}}>One agent, two surfaces</h2>
+        <p style={{"margin": "0", "maxWidth": "480px", "fontSize": "18px", "lineHeight": "1.5", "color": "#a1a1aa"}}>A website widget for customers and an internal team chat for staff. Both remember conversations across reloads.</p>
       </section>
+
+      <div className="ob2-tick" style={{"borderTop": "1px solid #2a2a33", "display": "flex", "flexWrap": "wrap"}}>
+        <nav className="ob2-rail" aria-label="Features" style={{"flex": "1 1 200px", "boxSizing": "border-box", "padding": "28px 32px", "borderRight": "1px solid #2a2a33", "display": "flex", "flexDirection": "column", "gap": "6px", "fontSize": "14px", "color": "#a1a1aa"}}>
+          <a href="#retrieval" style={{"padding": "8px 0", "color": "#f4f4f5"}}>Retrieval</a>
+          <a href="#agent" style={{"padding": "8px 0"}}>Agent</a>
+          <a href="#widget" style={{"padding": "8px 0"}}>Widget</a>
+          <a href="#team" style={{"padding": "8px 0"}}>Team chat</a>
+          <a href="#self-host" style={{"padding": "8px 0"}}>Self-host</a>
+        </nav>
+
+        <div style={{"flex": "999 1 560px", "minWidth": "0"}}>
+
+          <article id="retrieval" style={{"display": "grid", "gridTemplateColumns": "repeat(auto-fit, minmax(min(100%, 380px), 1fr))", "gap": "32px", "padding": "40px 32px"}}>
+            <div>
+              <p style={{"margin": "0 0 16px", "fontFamily": "'JetBrains Mono', monospace", "fontSize": "11px", "letterSpacing": "0.08em", "color": "#8a8a96"}}>RETRIEVAL</p>
+              <h3 style={{"margin": "0 0 16px", "maxWidth": "380px", "fontSize": "28px", "fontWeight": "500", "letterSpacing": "-0.02em", "lineHeight": "1.2"}}>Hybrid retrieval, not a vector lookup</h3>
+              <p style={{"margin": "0", "maxWidth": "400px", "fontSize": "15px", "lineHeight": "1.55", "color": "#a1a1aa"}}>Dense and lexical search fused with Reciprocal Rank Fusion, a RAPTOR summary layer, and a local cosine rerank. All on by default, no extra services.</p>
+            </div>
+            <div style={{"background": "#15151b", "border": "1px solid #2a2a33", "borderRadius": "8px", "padding": "24px", "fontFamily": "'JetBrains Mono', monospace", "fontSize": "13px", "lineHeight": "2", "overflowX": "auto"}}>
+              <div style={{"display": "grid", "gridTemplateColumns": "90px 1fr"}}><span style={{"color": "#c0c1ff"}}>dense</span><span style={{"color": "#a1a1aa"}}>pgvector</span></div>
+              <div style={{"display": "grid", "gridTemplateColumns": "90px 1fr"}}><span style={{"color": "#c0c1ff"}}>bm25</span><span style={{"color": "#a1a1aa"}}>postgres fts</span></div>
+              <div style={{"display": "grid", "gridTemplateColumns": "90px 1fr"}}><span style={{"color": "#c0c1ff"}}>fuse</span><span style={{"color": "#a1a1aa"}}>rrf k=60</span></div>
+              <div style={{"display": "grid", "gridTemplateColumns": "90px 1fr"}}><span style={{"color": "#c0c1ff"}}>raptor</span><span style={{"color": "#a1a1aa"}}>summary layer</span></div>
+              <div style={{"display": "grid", "gridTemplateColumns": "90px 1fr"}}><span style={{"color": "#c0c1ff"}}>rerank</span><span style={{"color": "#a1a1aa"}}>local cosine</span></div>
+            </div>
+          </article>
+
+          <article id="agent" style={{"borderTop": "1px solid #2a2a33", "display": "grid", "gridTemplateColumns": "repeat(auto-fit, minmax(min(100%, 380px), 1fr))", "gap": "32px", "padding": "40px 32px"}}>
+            <div>
+              <p style={{"margin": "0 0 16px", "fontFamily": "'JetBrains Mono', monospace", "fontSize": "11px", "letterSpacing": "0.08em", "color": "#8a8a96"}}>AGENT</p>
+              <h3 style={{"margin": "0 0 16px", "maxWidth": "380px", "fontSize": "28px", "fontWeight": "500", "letterSpacing": "-0.02em", "lineHeight": "1.2"}}>It decides when to search, capture or escalate</h3>
+              <p style={{"margin": "0", "maxWidth": "400px", "fontSize": "15px", "lineHeight": "1.55", "color": "#a1a1aa"}}>A small tool-calling loop with no framework. Falls back to plain RAG on providers without tool calling.</p>
+            </div>
+            <div style={{"background": "#15151b", "border": "1px solid #2a2a33", "borderRadius": "8px", "padding": "24px", "fontFamily": "'JetBrains Mono', monospace", "fontSize": "13px", "lineHeight": "2", "overflowX": "auto"}}>
+              <div style={{"color": "#8a8a96"}}>// widget</div>
+              <div style={{"color": "#f4f4f5"}}>search_knowledge</div>
+              <div style={{"color": "#f4f4f5"}}>capture_lead</div>
+              <div style={{"color": "#f4f4f5"}}>escalate</div>
+              <div style={{"color": "#8a8a96", "marginTop": "12px"}}>// team</div>
+              <div style={{"color": "#f4f4f5"}}>search_knowledge</div>
+              <div style={{"color": "#f4f4f5"}}>recent_conversations</div>
+              <div style={{"color": "#f4f4f5"}}>recent_leads</div>
+            </div>
+          </article>
+
+          <article id="widget" style={{"borderTop": "1px solid #2a2a33", "display": "grid", "gridTemplateColumns": "repeat(auto-fit, minmax(min(100%, 380px), 1fr))", "gap": "32px", "padding": "40px 32px"}}>
+            <div>
+              <p style={{"margin": "0 0 16px", "fontFamily": "'JetBrains Mono', monospace", "fontSize": "11px", "letterSpacing": "0.08em", "color": "#8a8a96"}}>WIDGET</p>
+              <h3 style={{"margin": "0 0 16px", "maxWidth": "380px", "fontSize": "28px", "fontWeight": "500", "letterSpacing": "-0.02em", "lineHeight": "1.2"}}>One script tag on your site</h3>
+              <p style={{"margin": "0", "maxWidth": "400px", "fontSize": "15px", "lineHeight": "1.55", "color": "#a1a1aa"}}>The widget shows the sources it used, so every answer can be checked. A visitor's chat comes back on reload.</p>
+            </div>
+            <div style={{"background": "#15151b", "border": "1px solid #2a2a33", "borderRadius": "8px", "padding": "24px", "fontFamily": "'JetBrains Mono', monospace", "fontSize": "13px", "lineHeight": "1.7", "overflowX": "auto"}}>
+              <div style={{"color": "#8a8a96", "marginBottom": "8px"}}>// paste before &lt;/body&gt;</div>
+              <code style={{"color": "#f4f4f5", "overflowWrap": "anywhere"}}>&lt;script src=<span style={{"color": "#c0c1ff"}}>"/widget.js"</span> data-business-id=<span style={{"color": "#c0c1ff"}}>"[BUSINESS_ID]"</span>&gt;&lt;/script&gt;</code>
+            </div>
+          </article>
+
+          <article id="team" style={{"borderTop": "1px solid #2a2a33", "display": "grid", "gridTemplateColumns": "repeat(auto-fit, minmax(min(100%, 380px), 1fr))", "gap": "32px", "padding": "40px 32px"}}>
+            <div>
+              <p style={{"margin": "0 0 16px", "fontFamily": "'JetBrains Mono', monospace", "fontSize": "11px", "letterSpacing": "0.08em", "color": "#8a8a96"}}>TEAM CHAT</p>
+              <h3 style={{"margin": "0 0 16px", "maxWidth": "380px", "fontSize": "28px", "fontWeight": "500", "letterSpacing": "-0.02em", "lineHeight": "1.2"}}>Ask about the business and its customers</h3>
+              <p style={{"margin": "0", "maxWidth": "400px", "fontSize": "15px", "lineHeight": "1.55", "color": "#a1a1aa"}}>Staff talk to the same agent, with access to recent conversations and leads from the widget.</p>
+            </div>
+            <div style={{"background": "#15151b", "border": "1px solid #2a2a33", "borderRadius": "8px", "padding": "24px", "display": "flex", "flexDirection": "column", "gap": "12px", "fontSize": "14px", "lineHeight": "1.5"}}>
+              <div style={{"alignSelf": "flex-end", "maxWidth": "80%", "background": "#2a2a33", "borderRadius": "8px", "padding": "10px 14px"}}>Which leads came in from the widget?</div>
+              <div style={{"fontFamily": "'JetBrains Mono', monospace", "fontSize": "12px", "color": "#8a8a96"}}>→ recent_leads</div>
+              <div style={{"alignSelf": "flex-start", "maxWidth": "80%", "color": "#a1a1aa"}}>[Answer listing recent leads]</div>
+            </div>
+          </article>
+
+          <article id="self-host" style={{"borderTop": "1px solid #2a2a33", "display": "grid", "gridTemplateColumns": "repeat(auto-fit, minmax(min(100%, 380px), 1fr))", "gap": "32px", "padding": "40px 32px"}}>
+            <div>
+              <p style={{"margin": "0 0 16px", "fontFamily": "'JetBrains Mono', monospace", "fontSize": "11px", "letterSpacing": "0.08em", "color": "#8a8a96"}}>SELF-HOST</p>
+              <h3 style={{"margin": "0 0 16px", "maxWidth": "380px", "fontSize": "28px", "fontWeight": "500", "letterSpacing": "-0.02em", "lineHeight": "1.2"}}>Three env vars pick the model</h3>
+              <p style={{"margin": "0", "maxWidth": "400px", "fontSize": "15px", "lineHeight": "1.55", "color": "#a1a1aa"}}>Data and conversations stay in your own Postgres and pgvector, running locally through Docker. No cloud account needed.</p>
+            </div>
+            <div style={{"background": "#15151b", "border": "1px solid #2a2a33", "borderRadius": "8px", "padding": "24px", "fontFamily": "'JetBrains Mono', monospace", "fontSize": "13px", "lineHeight": "2", "overflowX": "auto", "whiteSpace": "nowrap"}}>
+              <div><span style={{"color": "#8a8a96"}}>$</span> npm install</div>
+              <div><span style={{"color": "#8a8a96"}}>$</span> docker compose up -d</div>
+              <div><span style={{"color": "#8a8a96"}}>$</span> cp backend/.env.example backend/.env</div>
+              <div style={{"color": "#c0c1ff"}}>LLM_BASE_URL / LLM_API_KEY / LLM_MODEL</div>
+              <div><span style={{"color": "#8a8a96"}}>$</span> npm run dev</div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style={{"maxWidth": "1440px", "margin": "0 auto", "borderLeft": "1px solid #e4e4ea", "borderRight": "1px solid #e4e4ea", "boxSizing": "border-box"}}>
+    <section style={{"padding": "96px 32px", "display": "flex", "flexDirection": "column", "alignItems": "center", "textAlign": "center"}}>
+      <h2 style={{"margin": "0 0 20px", "maxWidth": "800px", "fontSize": "clamp(32px, 4vw, 52px)", "fontWeight": "500", "letterSpacing": "-0.035em", "lineHeight": "1.1"}}>Own the assistant, the models and the data</h2>
+      <p style={{"margin": "0 0 32px", "maxWidth": "520px", "fontSize": "18px", "lineHeight": "1.5", "color": "#5c5c68"}}>No API-key lock-in, and no third party between you and your customers.</p>
+      <div style={{"display": "flex", "flexWrap": "wrap", "justifyContent": "center", "gap": "12px"}}>
+        <a href="#start" style={{"display": "inline-flex", "alignItems": "center", "height": "46px", "padding": "0 20px", "background": "#121218", "color": "#fff", "borderRadius": "6px", "fontSize": "14px", "fontWeight": "600"}}>Index your site</a>
+        <a href="https://github.com/agilap/OpenGlazed" style={{"display": "inline-flex", "alignItems": "center", "height": "46px", "padding": "0 20px", "border": "1px solid #d3d3dc", "borderRadius": "6px", "fontSize": "14px", "fontWeight": "600"}}>View on GitHub</a>
+      </div>
+    </section>
+  </div>
+
+  <footer className="ob2-dark" style={{"background": "#0e0e12", "color": "#a1a1aa"}}>
+    <div style={{"maxWidth": "1440px", "margin": "0 auto", "borderLeft": "1px solid #2a2a33", "borderRight": "1px solid #2a2a33", "boxSizing": "border-box", "padding": "48px 32px 32px"}}>
+      <div style={{"display": "flex", "flexWrap": "wrap", "justifyContent": "space-between", "gap": "32px"}}>
+        <div style={{"fontSize": "18px", "fontWeight": "600", "letterSpacing": "-0.02em", "color": "#f4f4f5"}}>Glazed AI</div>
+        <div style={{"display": "flex", "flexWrap": "wrap", "gap": "32px 72px", "fontSize": "14px"}}>
+          <div style={{"display": "flex", "flexDirection": "column", "gap": "4px"}}>
+            <p style={{"margin": "0 0 8px", "fontFamily": "'JetBrains Mono', monospace", "fontSize": "11px", "letterSpacing": "0.08em", "color": "#8a8a96"}}>PRODUCT</p>
+            <a href="#features" style={{"padding": "6px 0"}}>Features</a>
+            <a href="#self-host" style={{"padding": "6px 0"}}>Self-host</a>
+            <a href="#start" style={{"padding": "6px 0"}}>Get started</a>
+          </div>
+          <div style={{"display": "flex", "flexDirection": "column", "gap": "4px"}}>
+            <p style={{"margin": "0 0 8px", "fontFamily": "'JetBrains Mono', monospace", "fontSize": "11px", "letterSpacing": "0.08em", "color": "#8a8a96"}}>PROJECT</p>
+            <a href="https://github.com/agilap/OpenGlazed" style={{"padding": "6px 0"}}>GitHub</a>
+            <a href="https://github.com/agilap/OpenGlazed#readme" style={{"padding": "6px 0"}}>README</a>
+            <a href="https://github.com/agilap/OpenGlazed/blob/main/LICENSE" style={{"padding": "6px 0"}}>MIT License</a>
+          </div>
+        </div>
+      </div>
+      <p style={{"margin": "40px 0 0", "fontSize": "13px", "color": "#8a8a96"}}>© 2026 Alexander Penuliar</p>
+    </div>
+  </footer>
+</div>
     </main>
+  );
+}
+
+function RetrievalTrace() {
+  const [tick, setTick] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 6 : 0);
+  useEffect(() => {
+    const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    let timer;
+    function syncMotion() {
+      clearInterval(timer);
+      if (motion.matches) setTick(6);
+      else {
+        setTick(0);
+        timer = setInterval(() => setTick((value) => (value + 1) % 7), 1400);
+      }
+    }
+    syncMotion();
+    motion.addEventListener('change', syncMotion);
+    return () => { clearInterval(timer); motion.removeEventListener('change', syncMotion); };
+  }, []);
+  const step = Math.min(tick, 4);
+  const sizes = [48, 24, 12, 5];
+  const columns = [
+    { name: 'CHUNKS + RAPTOR', detail: 'your pages and their summaries' },
+    { name: 'DENSE + BM25', detail: 'pgvector + postgres fts' },
+    { name: 'RRF', detail: 'rank fusion, k=60' },
+    { name: 'RERANK', detail: 'local cosine, top 5' },
+  ].map((col, k) => {
+    const size = sizes[k];
+    const keep = k < 3 ? sizes[k + 1] : size;
+    const squares = Array.from({ length: size }, (_, i) => {
+      const survives = (i * 7) % size < keep;
+      let bg = '#2a2a33';
+      if (step === k) bg = '#8083ff';
+      else if (step > k && survives) bg = '#c0c1ff';
+      return { bg };
+    });
+    return { ...col, squares, rule: step >= k ? '#8083ff' : '#2a2a33', label: step === k ? '#c0c1ff' : '#a1a1aa' };
+  });
+  const answered = step === 4;
+  const agentRule = answered ? '#8083ff' : '#2a2a33';
+  const agentLabel = answered ? '#c0c1ff' : '#a1a1aa';
+  return (
+<div className="ob2-trace" style={{"boxSizing": "border-box", "width": "100%", "maxWidth": "1180px", "margin": "0 auto", "background": "#121218", "color": "#f4f4f5", "border": "1px solid #2a2a33", "borderRadius": "12px", "fontFamily": "'JetBrains Mono', monospace", "textAlign": "left"}}>
+  <div style={{"display": "flex", "flexWrap": "wrap", "alignItems": "center", "justifyContent": "space-between", "gap": "8px 24px", "padding": "16px 24px", "borderBottom": "1px solid #2a2a33", "fontSize": "13px"}}>
+    <span><span style={{"color": "#8a8a96"}}>query&gt;</span> What are your opening hours?</span>
+    <span style={{"fontSize": "12px", "color": "#8a8a96"}}>example trace, acme.com</span>
+  </div>
+
+  <div style={{"display": "flex", "flexWrap": "wrap", "gap": "24px", "padding": "24px"}}>
+    {columns.map((col) => (
+      <div key={col.name} style={{"flex": "1 1 160px", "minWidth": "0", "borderTop": `2px solid ${col.rule}`, "paddingTop": "12px", "transition": "border-color 400ms"}}>
+        <p style={{"margin": "0 0 4px", "fontSize": "11px", "letterSpacing": "0.08em", "color": col.label, "transition": "color 400ms"}}>{col.name}</p>
+        <p style={{"margin": "0 0 16px", "minHeight": "32px", "fontSize": "12px", "lineHeight": "16px", "color": "#8a8a96"}}>{col.detail}</p>
+        <div aria-hidden="true" style={{"display": "flex", "flexWrap": "wrap", "gap": "4px"}}>
+          {col.squares.map((sq, i) => (
+            <span key={i} style={{"width": "12px", "height": "12px", "borderRadius": "2px", "background": sq.bg, "transition": "background 400ms"}}></span>
+          ))}
+        </div>
+      </div>
+    ))}
+
+    <div style={{"flex": "1.7 1 280px", "minWidth": "0", "borderTop": `2px solid ${agentRule}`, "paddingTop": "12px", "transition": "border-color 400ms"}}>
+      <p style={{"margin": "0 0 4px", "fontSize": "11px", "letterSpacing": "0.08em", "color": agentLabel, "transition": "color 400ms"}}>AGENT</p>
+      <p style={{"margin": "0 0 16px", "minHeight": "32px", "fontSize": "12px", "lineHeight": "16px", "color": "#8a8a96"}}>answers from what it found, with sources</p>
+      {answered && (<>
+        <p style={{"margin": "0 0 12px", "fontFamily": "Inter, sans-serif", "fontSize": "15px", "lineHeight": "1.5"}}>We're open 9 to 5, Monday to Friday.</p>
+        <div style={{"display": "flex", "flexWrap": "wrap", "gap": "6px", "fontSize": "12px", "color": "#c0c1ff"}}>
+          <span style={{"border": "1px solid #33333e", "borderRadius": "4px", "padding": "3px 7px"}}>acme.com/contact</span>
+          <span style={{"border": "1px solid #33333e", "borderRadius": "4px", "padding": "3px 7px"}}>acme.com/faq</span>
+        </div>
+      </>)}
+      {!answered && (<>
+        <p style={{"margin": "0", "fontSize": "12px", "color": "#8a8a96"}}>searching...</p>
+      </>)}
+    </div>
+  </div>
+</div>
   );
 }
