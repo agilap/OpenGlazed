@@ -32,6 +32,13 @@ function requireAdmin(req, res, next) {
   return res.status(401).json({ error: 'Unauthorized' });
 }
 
+// Express 4 does not catch rejected async handlers; without this, one failed query kills the process.
+function asyncRoute(handler) {
+  return function (req, res, next) {
+    handler(req, res, next).catch(next);
+  };
+}
+
 app.use(cors({ origin: allowedOrigin }));
 app.use(express.json({ limit: '25mb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
@@ -44,7 +51,7 @@ app.use(function (req, res, next) {
   next();
 });
 
-app.post('/api/businesses', requireAdmin, async function (req, res) {
+app.post('/api/businesses', requireAdmin, asyncRoute(async function (req, res) {
   var name = req.body.name;
   var url  = req.body.url;
 
@@ -68,9 +75,9 @@ app.post('/api/businesses', requireAdmin, async function (req, res) {
   runIngest(business.id, url).catch(function (err) {
     console.error('Background ingest failed for business', business.id, err.message);
   });
-});
+}));
 
-app.get('/api/businesses/:id', async function (req, res) {
+app.get('/api/businesses/:id', asyncRoute(async function (req, res) {
   var business = await db.getBusinessById(req.params.id);
 
   if (!business) {
@@ -78,18 +85,18 @@ app.get('/api/businesses/:id', async function (req, res) {
   }
 
   return res.json({ business: business });
-});
+}));
 
-app.get('/api/businesses/:id/dashboard', requireAdmin, async function (req, res) {
+app.get('/api/businesses/:id/dashboard', requireAdmin, asyncRoute(async function (req, res) {
   var businessId = Number(req.params.id);
 
   var business = await db.getBusinessById(businessId);
   if (!business) return res.status(404).json({ error: 'business not found' });
 
   return res.json({ business: business });
-});
+}));
 
-app.post('/api/ingest/:businessId', requireAdmin, async function (req, res) {
+app.post('/api/ingest/:businessId', requireAdmin, asyncRoute(async function (req, res) {
   var businessId = req.params.businessId;
   var business = await db.getBusinessUrl(businessId);
   if (!business) return res.status(404).json({ error: 'Business not found' });
@@ -98,18 +105,18 @@ app.post('/api/ingest/:businessId', requireAdmin, async function (req, res) {
   runIngest(businessId, business.url).catch(function (err) {
     console.error('Re-ingest failed for business', businessId, err.message);
   });
-});
+}));
 
-app.get('/api/ingest/:businessId/status', async function (req, res) {
+app.get('/api/ingest/:businessId/status', asyncRoute(async function (req, res) {
   var data = await db.getBusinessStatusCols(req.params.businessId);
 
   res.json({
     status:          data.ingest_status  || 'unknown',
     ingest_progress: data.ingest_progress || 0,
   });
-});
+}));
 
-app.post('/api/sources/:businessId', requireAdmin, async function (req, res) {
+app.post('/api/sources/:businessId', requireAdmin, asyncRoute(async function (req, res) {
   var businessId = Number(req.params.businessId);
   var business = await db.getBusinessById(businessId);
   if (!business) return res.status(404).json({ error: 'Business not found' });
@@ -126,7 +133,7 @@ app.post('/api/sources/:businessId', requireAdmin, async function (req, res) {
     .catch(function (err) {
       console.error('[sources] ingest failed for', businessId, sourceType, err.message);
     });
-});
+}));
 
 var EVAL_SAMPLE_RATE = process.env.EVAL_SAMPLE_RATE !== undefined ? Number(process.env.EVAL_SAMPLE_RATE) : 0.1;
 
@@ -307,6 +314,13 @@ app.get('/api/dashboard/:businessId/questions', requireAdmin, async function (re
 });
 
 app.get('/health', function (_req, res) { res.json({ ok: true }); });
+
+app.use(function (err, req, res, next) {
+  if (res.headersSent) return next(err);
+  var status = err.status || 500;
+  if (status >= 500) console.error(req.method + ' ' + req.path + ' failed:', err.message);
+  res.status(status).json({ error: status >= 500 ? 'Internal server error' : err.message });
+});
 
 const { chat: chatCfg } = require('./services/modelConfig');
 if (!process.env.LLM_API_KEY) {

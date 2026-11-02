@@ -10,6 +10,11 @@ const pool = new Pool({
   max: 10,
 });
 
+// pg emits this when an idle client loses its connection; with no listener it kills the process.
+pool.on('error', (err) => {
+  console.error('[db] idle client error:', err.message);
+});
+
 if (!process.env.DATABASE_URL) {
   console.error('[db] DATABASE_URL is not set. Point it at your Postgres (see docker-compose.yml).');
 }
