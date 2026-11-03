@@ -8,7 +8,9 @@ const UA = 'Mozilla/5.0 (compatible; glazed-bot/0.1)';
 
 function cleanText(raw) {
   return raw
-    .replace(/\s+/g, ' ')
+    .replace(/[ \t\r\u00A0]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
     .replace(/(\b\w+\b)( \1){3,}/gi, '$1')
     .replace(/(top of page|back to top|skip to content|cookie policy|accept cookies)/gi, '')
     .trim();
@@ -23,6 +25,9 @@ function extractPage($, pageUrl) {
     .get()
     .filter(Boolean)
     .join('\n');
+
+  $('br').replaceWith('\n');
+  $('p, li, h1, h2, h3, div, section, article, tr, blockquote').append('\n\n');
 
   let bodyText = '';
   const main = $('main, article, [role="main"]');
@@ -55,9 +60,10 @@ function extractSections($, pageUrl) {
     if (hMatch) {
       currentHeading = cheerio.load(hMatch[1]).text().trim() || currentHeading;
     } else {
-      const spacedHtml = part.replace(/<\/(div|p|li|td|span|section|article|aside|blockquote|figure|figcaption)>/gi, '</$1> ');
+      const spacedHtml = part.replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/(div|p|li|td|section|article|aside|blockquote|figure|figcaption)>/gi, '</$1>\n\n');
       const text = cleanText(cheerio.load(`<div>${spacedHtml}</div>`).text());
-      if (text.length > 50) {
+      if (text) {
         const cleanHeading = currentHeading.replace(/\s*\|.*$/, '').trim();
         sections.push({
           heading: cleanHeading || currentHeading,
@@ -115,7 +121,7 @@ async function scrapeWebsite(url) {
       const text = extractPage($, current);
       const $fresh = cheerio.load(rawHtml);
       const sections = extractSections($fresh, current);
-      if (text && text.length > 80) {
+      if (text) {
         pages.push({ url: current, text, sections });
       }
       const found = discoverLinks($, current);
@@ -150,5 +156,6 @@ async function scrapeWebsite(url) {
 }
 
 module.exports = {
-  scrapeWebsite
+  scrapeWebsite,
+  extractSections
 };

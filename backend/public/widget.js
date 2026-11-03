@@ -1,145 +1,84 @@
 (function() {
+  var script = document.currentScript;
+  var dataset = (script && script.dataset) || {};
+  var scriptUrl = script && script.src;
   function initWidget() {
-    var script = document.currentScript;
-    var dataset = (script && script.dataset) || {};
-
     var businessId = dataset.businessId;
-    if (!businessId) {
-      console.error('[Glazed widget] Missing required data-business-id.');
-      return;
-    }
-
-    var primaryColor = dataset.primaryColor || '#6366f1';
+    if (!businessId) return;
+    var primaryColor = /^#[0-9a-f]{6}$/i.test(dataset.primaryColor || '') ? dataset.primaryColor : '#6366f1';
     var position = dataset.position === 'left' ? 'left' : 'right';
-    var greeting = dataset.greeting || 'Hi! How can I help today?';
-
+    var greeting = (dataset.greeting || 'Hi! How can I help today?').slice(0, 300);
+    var embedUrl;
+    try {
+      embedUrl = new URL('/embed/' + encodeURIComponent(businessId), dataset.appUrl || scriptUrl || window.location.href);
+      if (!/^https?:$/.test(embedUrl.protocol)) return;
+    } catch (_) { return; }
+    embedUrl.searchParams.set('color', primaryColor);
+    embedUrl.searchParams.set('greeting', greeting);
+    embedUrl.searchParams.set('theme', dataset.theme === 'dark' ? 'dark' : 'light');
+    var reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     var isOpen = false;
-
     var root = document.createElement('div');
-    root.style.position = 'fixed';
-    root.style.zIndex = '2147483000';
-    root.style.pointerEvents = 'none';
-    root.style.bottom = '0';
-    root.style.left = '0';
-    root.style.right = '0';
-
+    root.style.cssText = 'position:fixed;z-index:2147483000;pointer-events:none;bottom:0;left:0;right:0';
     var button = document.createElement('button');
     button.type = 'button';
-    button.setAttribute('aria-label', 'Toggle chat widget');
-    button.style.position = 'fixed';
-    button.style.width = '56px';
-    button.style.height = '56px';
-    button.style.borderRadius = '9999px';
-    button.style.border = 'none';
-    button.style.padding = '0';
-    button.style.margin = '0';
-    button.style.cursor = 'pointer';
+    button.setAttribute('aria-label', 'Open chat');
+    button.setAttribute('aria-expanded', 'false');
+    button.style.cssText = 'position:fixed;width:56px;height:56px;border-radius:50%;border:2px solid white;padding:0;margin:0;cursor:pointer;color:white;display:grid;place-items:center;box-shadow:0 8px 32px #0003;pointer-events:auto;bottom:24px';
     button.style.background = primaryColor;
-    button.style.color = '#ffffff';
-    button.style.display = 'grid';
-    button.style.placeItems = 'center';
-    button.style.boxShadow = '0 8px 32px rgba(0,0,0,0.18)';
-    button.style.transition = 'opacity 200ms ease, transform 200ms ease';
-    button.style.pointerEvents = 'auto';
-    button.style.bottom = '24px';
+    var channels = primaryColor.slice(1).match(/../g).map(function(hex) {
+      var value = parseInt(hex, 16) / 255;
+      return value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
+    });
+    button.style.color = channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722 > 0.179 ? '#121218' : '#ffffff';
     button.style[position] = '24px';
-
+    button.textContent = 'Chat';
     var iframe = document.createElement('iframe');
-    iframe.title = 'Glazed Chat Widget';
-    iframe.src = '/embed/' + encodeURIComponent(businessId) + '?color=' + encodeURIComponent(primaryColor) + '&greeting=' + encodeURIComponent(greeting);
-    iframe.style.position = 'fixed';
-    iframe.style.border = 'none';
-    iframe.style.boxShadow = '0 8px 32px rgba(0,0,0,0.18)';
-    iframe.style.display = 'none';
-    iframe.style.opacity = '0';
-    iframe.style.transform = 'translateY(6px) scale(0.985)';
-    iframe.style.transition = 'opacity 200ms ease, transform 200ms ease';
-    iframe.style.pointerEvents = 'none';
-
-    function chatIconSvg() {
-      return '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 5h16v10H8l-4 4V5z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-    }
-
-    function closeIconSvg() {
-      return '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 6l12 12M18 6l-12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
-    }
-
-    function applyResponsiveLayout() {
+    iframe.title = 'Business chat assistant';
+    iframe.src = embedUrl.href;
+    iframe.style.cssText = 'position:fixed;border:0;box-shadow:0 8px 32px #0003;display:none;pointer-events:auto';
+    iframe.setAttribute('aria-hidden', 'true');
+    var close = document.createElement('button');
+    close.type = 'button';
+    close.textContent = 'Close chat';
+    close.style.cssText = 'position:fixed;display:none;pointer-events:auto;top:8px;right:8px;min-height:44px;padding:8px 12px;background:white;color:#121218;border:1px solid #777;border-radius:6px;cursor:pointer';
+    function layout() {
       var mobile = window.innerWidth <= 768;
-
-      if (mobile) {
-        iframe.style.width = '100vw';
-        iframe.style.height = '100vh';
-        iframe.style.top = '0';
-        iframe.style.left = '0';
-        iframe.style.right = 'auto';
-        iframe.style.bottom = 'auto';
-        iframe.style.borderRadius = '0';
-      } else {
-        iframe.style.width = '380px';
-        iframe.style.height = '560px';
-        iframe.style.top = 'auto';
-        iframe.style.bottom = '92px';
-        iframe.style.left = position === 'left' ? '24px' : 'auto';
-        iframe.style.right = position === 'right' ? '24px' : 'auto';
-        iframe.style.borderRadius = '16px';
-      }
+      iframe.style.width = mobile ? '100vw' : 'min(380px, calc(100vw - 48px))';
+      iframe.style.height = mobile ? '100dvh' : 'min(560px, calc(100dvh - 116px))';
+      iframe.style.top = mobile ? '0' : 'auto';
+      iframe.style.bottom = mobile ? 'auto' : '92px';
+      iframe.style.left = mobile ? '0' : position === 'left' ? '24px' : 'auto';
+      iframe.style.right = mobile ? 'auto' : position === 'right' ? '24px' : 'auto';
+      iframe.style.borderRadius = mobile ? '0' : '16px';
+      close.style.display = isOpen && mobile ? 'block' : 'none';
+      button.style.display = isOpen && mobile ? 'none' : 'grid';
     }
-
-    function applyOpenState(nextOpen) {
-      isOpen = nextOpen;
-
-      button.innerHTML = isOpen ? closeIconSvg() : chatIconSvg();
-      button.style.transform = isOpen ? 'scale(0.96)' : 'scale(1)';
-      button.style.opacity = isOpen ? '0.98' : '1';
-
-      if (isOpen) {
-        iframe.style.display = 'block';
-        requestAnimationFrame(function() {
-          iframe.style.opacity = '1';
-          iframe.style.transform = 'translateY(0) scale(1)';
-          iframe.style.pointerEvents = 'auto';
-        });
-      } else {
-        iframe.style.opacity = '0';
-        iframe.style.transform = 'translateY(6px) scale(0.985)';
-        iframe.style.pointerEvents = 'none';
-        window.setTimeout(function() {
-          if (!isOpen) {
-            iframe.style.display = 'none';
-          }
-        }, 200);
-      }
+    function open(value) {
+      isOpen = value;
+      button.setAttribute('aria-expanded', String(value));
+      button.setAttribute('aria-label', value ? 'Close chat' : 'Open chat');
+      button.textContent = value ? 'Close' : 'Chat';
+      iframe.style.display = value ? 'block' : 'none';
+      iframe.setAttribute('aria-hidden', String(!value));
+      iframe.style.transition = reducedMotion ? 'none' : 'opacity 150ms ease';
+      layout();
+      if (value) iframe.focus();
+      else button.focus();
     }
-
-    button.innerHTML = chatIconSvg();
-
-    button.addEventListener('click', function() {
-      applyOpenState(!isOpen);
+    button.addEventListener('click', function() { open(!isOpen); });
+    close.addEventListener('click', function() { open(false); });
+    window.addEventListener('keydown', function(event) { if (event.key === 'Escape' && isOpen) open(false); });
+    window.addEventListener('message', function(event) {
+      if (event.source === iframe.contentWindow && event.origin === embedUrl.origin && event.data && event.data.type === 'GLAZED_CLOSE') open(false);
     });
-
-    window.addEventListener('resize', applyResponsiveLayout);
-
-    iframe.addEventListener('load', function() {
-      iframe.contentWindow.postMessage(
-        {
-          type: 'GLAZED_INIT',
-          greeting: greeting,
-          primaryColor: primaryColor,
-        },
-        '*'
-      );
-    });
-
-    applyResponsiveLayout();
+    window.addEventListener('resize', layout);
+    layout();
     root.appendChild(iframe);
     root.appendChild(button);
+    root.appendChild(close);
     document.body.appendChild(root);
   }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initWidget, { once: true });
-  } else {
-    initWidget();
-  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initWidget, { once: true });
+  else initWidget();
 })();

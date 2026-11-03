@@ -3,36 +3,12 @@
 const { generateQueryRewrite } = require('./generator');
 const db = require('../db');
 const { embedQuery } = require('./llm');
+const { stage, recordRetrieval, recordError } = require('./traces');
 
 function detectQueryLevel(query) {
-  const vaguePatterns = [
-    'what do you do',
-    'what do you',
-    'what does this',
-    'what is this',
-    'tell me about',
-    'give me an overview',
-    'explain what',
-    'what can you',
-    'about you',
-    'about this',
-    'who are you',
-    'what do you offer',
-    'overview',
-    'summary',
-    'what are you',
-    'what is',
-    'what is your',
-    'describe your',
-    'what does your',
-    'explain your',
-  ];
-
   const normalized = (query || '').toLowerCase().trim();
-  const wordCount = normalized ? normalized.split(/\s+/).length : 0;
-  const isVague = vaguePatterns.some((pattern) => normalized.includes(pattern)) || wordCount <= 6;
-
-  return isVague ? [1, 2] : [0];
+  const overview = /\b(overview|summary|what do you (do|offer)|who are you|tell me about (your business|the company))\b/.test(normalized);
+  return overview ? [0, 1, 2] : [0];
 }
 
 function normalizeResultRow(row, fallbackLevel = 0) {
@@ -42,7 +18,8 @@ function normalizeResultRow(row, fallbackLevel = 0) {
     level: Number.isInteger(row?.level) ? row.level : fallbackLevel,
     source_url: row?.source_url || null,
     cluster_id: row?.cluster_id ?? null,
-    similarity: typeof row?.similarity === 'number' ? row.similarity : null,
+    similarity: Number.isFinite(row?.similarity) ? row.similarity : null,
+    lexical_score: Number.isFinite(row?.rank) ? row.rank : null,
   };
 }
 
@@ -63,7 +40,6 @@ async function queryBM25(queryText, businessId) {
 
   const plainRows = await db.plainFtsSearch(safeQuery, businessId, 20);
   if (plainRows.length === 0) {
-    console.log('[retriever] FTS no results for: ' + safeQuery);
     return [];
   }
 
@@ -77,7 +53,7 @@ function mergeBm25Results(primary, secondary) {
   for (const list of [primary || [], secondary || []]) {
     for (const row of list) {
       const key = row.id !== null && row.id !== undefined
-        ? `id:${row.id}`
+        ? `id:${row.level}:${row.id}`
         : `fallback:${row.content.slice(0, 120)}`;
       if (seen.has(key)) {
         continue;
@@ -91,7 +67,7 @@ function mergeBm25Results(primary, secondary) {
 }
 
 function cosineSim(a, b) {
-  if (!Array.isArray(a) || !Array.isArray(b) || a.length === 0) return 0;
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length === 0 || a.length !== b.length || !a.every(Number.isFinite) || !b.every(Number.isFinite)) return null;
   let dotP = 0;
   let na = 0;
   let nb = 0;
@@ -101,7 +77,7 @@ function cosineSim(a, b) {
     nb += b[i] * b[i];
   }
   const denom = Math.sqrt(na) * Math.sqrt(nb);
-  return denom === 0 ? 0 : dotP / denom;
+  return denom === 0 ? null : dotP / denom;
 }
 
 function reciprocalRankFusion(dense, bm25, k = 60) {
@@ -111,19 +87,25 @@ function reciprocalRankFusion(dense, bm25, k = 60) {
     for (let rank = 0; rank < items.length; rank += 1) {
       const item = items[rank];
       const key = item.id !== null && item.id !== undefined
-        ? `id:${item.id}`
+        ? `id:${item.level}:${item.id}`
         : `fallback:${item.level}:${item.content.slice(0, 120)}`;
 
       if (!scoreMap.has(key)) {
         scoreMap.set(key, {
           ...item,
           rrf_score: 0,
+          dense_score: null,
+          lexical_score: null,
+          rerank_score: null,
           _sources: new Set(),
         });
       }
 
       const existing = scoreMap.get(key);
+      if (existing._sources.has(listName)) continue;
       existing.rrf_score += 1 / (k + rank + 1);
+      if (listName === 'dense') existing.dense_score = item.similarity;
+      if (listName === 'bm25') existing.lexical_score = item.lexical_score;
       existing._sources.add(listName);
     }
   }
@@ -142,63 +124,34 @@ function reciprocalRankFusion(dense, bm25, k = 60) {
 }
 
 function assessConfidence(topScore, chunkCount, queryLevels, reranked) {
-  if (chunkCount === 0) {
-    return {
-      confidence: 'low',
-      shouldEscalate: true,
-      reason: 'No chunks retrieved',
-    };
-  }
-
-  if (reranked) {
-    if (topScore < 0.0) {
-      return { confidence: 'low', shouldEscalate: true, reason: `Low relevance: ${topScore.toFixed(3)}` };
-    }
-    if (topScore < 0.25) {
-      return { confidence: 'medium', shouldEscalate: false, reason: null };
-    }
-    return { confidence: 'high', shouldEscalate: false, reason: null };
-  }
-
-  if (!reranked && Array.isArray(queryLevels) && queryLevels.includes(2)) {
-    return {
-      confidence: 'medium',
-      shouldEscalate: false,
-      reason: null,
-    };
-  }
-
-  const threshold = Array.isArray(queryLevels) && queryLevels.includes(2) ? -5.0 : -3.0;
-
-  if (topScore < threshold) {
-    return {
-      confidence: 'low',
-      shouldEscalate: true,
-      reason: `Low relevance: ${topScore.toFixed(3)}`,
-    };
-  }
-
-  if (topScore < 0) {
-    return {
-      confidence: 'medium',
-      shouldEscalate: false,
-      reason: null,
-    };
-  }
-
-  return {
-    confidence: 'high',
-    shouldEscalate: false,
-    reason: null,
-  };
+  if (!chunkCount) return { confidence: 'low', shouldEscalate: true, reason: 'No chunks retrieved' };
+  if (reranked && topScore < 0) return { confidence: 'low', shouldEscalate: true, reason: 'Negative cosine relevance' };
+  return { confidence: 'medium', shouldEscalate: false, reason: null };
 }
 
-async function retrieve(businessId, rawQuery, { rewrite = true } = {}) {
+function assembleContext(candidates, { maxChunks = 5, maxChars = 12000, chunkChars = 4000 } = {}) {
+  const selected = [];
+  const seen = new Set();
+  let remaining = maxChars;
+  for (const candidate of candidates) {
+    const content = (candidate.content || '').trim();
+    const key = content.replace(/\s+/g, ' ').toLowerCase();
+    if (!key || seen.has(key) || remaining <= 0 || selected.length >= maxChunks) continue;
+    seen.add(key);
+    const bounded = content.slice(0, Math.min(chunkChars, remaining));
+    remaining -= bounded.length;
+    selected.push({ ...candidate, content: bounded, context_truncated: bounded.length < content.length });
+  }
+  return selected;
+}
+
+async function retrieve(businessId, rawQuery, { rewrite = process.env.RAG_QUERY_REWRITE === 'true', dense = true, rerank = process.env.RAG_COSINE_RERANK === 'true', maxChunks = 5 } = {}) {
   const safeRawQuery = (rawQuery || '').trim();
 
   const rawLevels = detectQueryLevel(safeRawQuery);
-  const rewritePromise = rewrite ? generateQueryRewrite(safeRawQuery) : Promise.resolve(safeRawQuery);
-  const rawBm25Promise = queryBM25(safeRawQuery, businessId);
+  const rewritePromise = rewrite ? stage('query_rewrite', () => generateQueryRewrite(safeRawQuery)) : Promise.resolve(safeRawQuery);
+  const rawBm25Promise = stage('lexical_raw', () => queryBM25(safeRawQuery, businessId));
+  rawBm25Promise.catch(() => {});
 
   let rewrittenQuery = safeRawQuery;
   try {
@@ -209,14 +162,15 @@ async function retrieve(businessId, rawQuery, { rewrite = true } = {}) {
   }
 
   const levelsQueried = rawLevels;
-  const rewrittenBm25Promise = queryBM25(rewrittenQuery || safeRawQuery, businessId);
+  const rewrittenBm25Promise = rewrittenQuery !== safeRawQuery
+    ? stage('lexical_rewrite', () => queryBM25(rewrittenQuery, businessId)) : Promise.resolve([]);
 
   let queryEmbedding = null;
   let bm25RawResults = [];
   let bm25RewriteResults = [];
 
   const [embedResult, bm25RawResult, bm25RewriteResult] = await Promise.allSettled([
-    embedQueryLocal(rewrittenQuery),
+    dense ? stage('query_embedding', () => embedQueryLocal(safeRawQuery)) : Promise.resolve(null),
     rawBm25Promise,
     rewrittenBm25Promise,
   ]);
@@ -256,17 +210,17 @@ async function retrieve(businessId, rawQuery, { rewrite = true } = {}) {
     const rpcMeta = [];
 
     if (levelsQueried.includes(0)) {
-      rpcCalls.push(db.matchChunks(queryEmbedding, businessId, 0, 20));
+      rpcCalls.push(stage('dense_chunks', () => db.matchChunks(queryEmbedding, businessId, 0, 20)));
       rpcMeta.push(0);
     }
 
     if (levelsQueried.includes(1)) {
-      rpcCalls.push(db.matchSummaries(queryEmbedding, businessId, 1, 5));
+      rpcCalls.push(stage('dense_summary_1', () => db.matchSummaries(queryEmbedding, businessId, 1, 5)));
       rpcMeta.push(1);
     }
 
     if (levelsQueried.includes(2)) {
-      rpcCalls.push(db.matchSummaries(queryEmbedding, businessId, 2, 3));
+      rpcCalls.push(stage('dense_summary_2', () => db.matchSummaries(queryEmbedding, businessId, 2, 3)));
       rpcMeta.push(2);
     }
 
@@ -291,7 +245,7 @@ async function retrieve(businessId, rawQuery, { rewrite = true } = {}) {
       }
     }
 
-    return combined;
+    return combined.sort((a, b) => (b.similarity ?? -1) - (a.similarity ?? -1));
   })();
 
   const denseResult = await Promise.allSettled([densePromise]);
@@ -301,50 +255,42 @@ async function retrieve(businessId, rawQuery, { rewrite = true } = {}) {
     console.warn('[retriever] Dense retrieval failed:', denseResult[0].reason?.message || denseResult[0].reason);
   }
 
-  if (denseResults.length === 0 && levelsQueried.includes(2) && queryEmbedding) {
-    try {
-      const fallback = await db.matchChunks(queryEmbedding, businessId, 0, 20);
-
-      if (Array.isArray(fallback) && fallback.length > 0) {
-        denseResults.push(...fallback.map((row) => normalizeResultRow(row, 0)));
-      }
-    } catch (error) {
-      console.warn('[retriever] Dense fallback to level 0 failed:', error.message || error);
-    }
-  }
-
-  const fused = reciprocalRankFusion(denseResults, bm25Results, 60);
-  const raptorSummary = denseResults.find((row) => row.level === 2)?.content || null;
+  const fused = await stage('fusion', async () => reciprocalRankFusion(denseResults, bm25Results, 60));
+  const raptorSummary = null;
 
   let rerankSucceeded = false;
-  let top5 = fused.slice(0, 5);
+  let rankedCandidates = fused;
+  let top5 = assembleContext(fused, { maxChunks });
   let topScore = fused[0]?.rrf_score || 0;
 
-  if (fused.length > 0 && !levelsQueried.includes(2)) {
+  if (rerank && fused.length > 0 && !levelsQueried.includes(2)) {
     if (queryEmbedding) {
       try {
-        const ids = fused.map((row) => row.id).filter((id) => id != null);
-        const embMap = await db.getEmbeddingsForIds(ids);
+        const ids = fused.filter((row) => row.level === 0).map((row) => row.id).filter((id) => id != null);
+        const embMap = await stage('rerank_embeddings', () => db.getEmbeddingsForIds(ids, businessId));
         const scored = fused
           .map((row) => ({
             ...row,
-            rerank_score: embMap.has(row.id) ? cosineSim(queryEmbedding, embMap.get(row.id)) : 0,
+            rerank_score: row.level === 0 && embMap.has(String(row.id)) ? cosineSim(queryEmbedding, embMap.get(String(row.id))) : null,
           }))
-          .sort((a, b) => b.rerank_score - a.rerank_score);
-        top5 = scored.slice(0, 5);
+          .sort((a, b) => (b.rerank_score ?? -1) - (a.rerank_score ?? -1) || b.rrf_score - a.rrf_score);
+        rankedCandidates = scored;
+        top5 = assembleContext(scored, { maxChunks });
         topScore = top5[0]?.rerank_score ?? 0;
-        rerankSucceeded = true;
+        rerankSucceeded = scored.some((row) => Number.isFinite(row.rerank_score));
       } catch (error) {
+        recordError(error, 'rerank');
         console.warn('[retriever] Local rerank failed:', error.message);
       }
     }
   }
 
   if (!rerankSucceeded) {
-    top5 = fused.slice(0, 5);
+    top5 = assembleContext(fused, { maxChunks });
     topScore = fused[0]?.rrf_score || 0;
   }
 
+  top5 = await stage('context_assembly', async () => assembleContext(rankedCandidates, { maxChunks }));
   const { confidence, shouldEscalate, reason } = assessConfidence(
     topScore,
     top5.length,
@@ -361,10 +307,13 @@ async function retrieve(businessId, rawQuery, { rewrite = true } = {}) {
     topScore,
   };
 
-  console.log('[retriever] retrievalPath', retrievalPath);
+  console.log(JSON.stringify({ event: 'retrieval', ...retrievalPath }));
 
-  return {
+  const result = {
+    query: safeRawQuery,
     chunks: top5,
+    candidates: rankedCandidates,
+    stageCandidates: { dense: denseResults, lexicalRaw: bm25RawResults, lexicalRewrite: bm25RewriteResults },
     confidence,
     shouldEscalate,
     reason: reason || null,
@@ -372,6 +321,8 @@ async function retrieve(businessId, rawQuery, { rewrite = true } = {}) {
     raptorSummary,
     retrievalPath,
   };
+  recordRetrieval(result);
+  return result;
 }
 
-module.exports = { retrieve };
+module.exports = { retrieve, detectQueryLevel, reciprocalRankFusion, assembleContext, cosineSim };

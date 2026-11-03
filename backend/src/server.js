@@ -8,6 +8,7 @@ const cors    = require('cors');
 const { evaluateAnswer } = require('./services/generator');
 const { runAgent }  = require('./services/agent');
 const db            = require('./db');
+const traces = require('./services/traces');
 const { runIngest, ingestNormalized } = require('./ingest');
 const { ingestSource, SUPPORTED } = require('./sources');
 
@@ -32,10 +33,9 @@ function requireAdmin(req, res, next) {
   return res.status(401).json({ error: 'Unauthorized' });
 }
 
-// Express 4 does not catch rejected async handlers; without this, one failed query kills the process.
 function asyncRoute(handler) {
   return function (req, res, next) {
-    handler(req, res, next).catch(next);
+    return handler(req, res, next).catch(next);
   };
 }
 
@@ -46,7 +46,7 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 app.use(function (req, res, next) {
   var start = Date.now();
   res.on('finish', function () {
-    console.log(req.method + ' ' + req.path + ' ' + res.statusCode + ' ' + (Date.now() - start) + 'ms');
+    console.log(JSON.stringify({ event: 'http.request', method: req.method, path: req.path, status: res.statusCode, duration_ms: Date.now() - start }));
   });
   next();
 });
@@ -137,8 +137,13 @@ app.post('/api/sources/:businessId', requireAdmin, asyncRoute(async function (re
 
 var EVAL_SAMPLE_RATE = process.env.EVAL_SAMPLE_RATE !== undefined ? Number(process.env.EVAL_SAMPLE_RATE) : 0.1;
 
+function validBusinessId(value) {
+  return typeof value === 'string' && /^[1-9]\d{0,18}$/.test(value) && BigInt(value) <= 9223372036854775807n;
+}
+
 async function handleChatStream(req, res, surface) {
   var businessId = req.params.businessId;
+  if (!validBusinessId(businessId)) return res.status(400).json({ error: 'Invalid businessId' });
   var message    = req.body.message;
   var sessionId  = req.body.sessionId;
 
@@ -149,75 +154,85 @@ async function handleChatStream(req, res, surface) {
     return res.status(400).json({ error: 'message or sessionId too long' });
   }
 
-  res.writeHead(200, {
-    'Content-Type':  'text/event-stream',
-    'Cache-Control': 'no-cache, no-transform',
-    Connection:      'keep-alive',
-    'X-Accel-Buffering': 'no',
-  });
-
-  var closed = false;
-  res.on('close', function () { closed = true; });
-  var send = function (obj) { if (!closed) res.write('data: ' + JSON.stringify(obj) + '\n\n'); };
-
-  try {
-    var business = await db.getClient(businessId);
-    var history  = await db.getHistory(businessId, sessionId, surface);
-
-    var result = await runAgent({
-      businessId: businessId,
-      business:   business,
-      surface:    surface,
-      sessionId:  sessionId,
-      history:    history,
-      message:    message,
-      onToken:    function (t) { send({ token: t }); },
+  return traces.runTrace({ businessId, sessionId, surface, query: message }, async function (trace) {
+    res.writeHead(200, {
+      'Content-Type':  'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection:      'keep-alive',
+      'X-Accel-Buffering': 'no',
     });
 
-    send({
-      done: true,
-      escalated:  result.escalated,
-      source:     result.source,
-      confidence: result.confidence,
-      sessionId:  sessionId,
-      citations:  result.citations,
-    });
-    res.end();
+    var closed = false;
+    res.on('close', function () { closed = true; });
+    var sentText = false;
+    var send = function (obj) {
+      if (obj.token) sentText = true;
+      if (!closed) res.write('data: ' + JSON.stringify(obj) + '\n\n');
+    };
 
-    setImmediate(async function () {
-      try {
-        await db.saveMessage(businessId, sessionId, 'visitor', message, { channel: surface });
-        await db.saveMessage(businessId, sessionId, 'assistant', result.response, {
-          confidence: result.confidence,
-          escalated:  result.escalated,
-          source:     result.source,
-          channel:    surface,
-        });
+    try {
+      var business = await traces.stage('business', () => db.getClient(businessId));
+      var history  = await traces.stage('history', () => db.getHistory(businessId, sessionId, surface));
 
-        if (surface === 'widget' && !result.escalated && result.chunks.length > 0 && Math.random() < EVAL_SAMPLE_RATE) {
-          var contents = result.chunks.map(function (c) { return c.content; });
-          var scores = await evaluateAnswer({ query: message, answer: result.response, chunks: contents });
-          await db.insertEvalLog({
-            business_id: businessId, session_id: sessionId,
-            query: message, answer: result.response,
-            retrieved_chunks: JSON.stringify(result.chunks),
-            faithfulness_score: scores.faithfulness,
-            answer_relevance_score: scores.answer_relevance,
-            context_precision_score: scores.context_precision,
-            overall_score: (scores.faithfulness !== null && scores.answer_relevance !== null) ? (scores.faithfulness + scores.answer_relevance + (scores.context_precision || 0)) / 3 : null,
-            flagged_hallucination: scores.has_hallucination,
+      var result = await traces.stage('agent', () => runAgent({
+        businessId: businessId,
+        business:   business,
+        surface:    surface,
+        sessionId:  sessionId,
+        history:    history,
+        message:    message,
+        onToken:    function (t) { send({ token: t }); },
+      }));
+
+      send({
+        done: true,
+        escalated:  result.escalated,
+        source:     result.source,
+        confidence: result.confidence,
+        sessionId:  sessionId,
+        citations:  result.citations,
+        traceId: trace.id,
+      });
+      res.end();
+
+      setImmediate(async function () {
+        try {
+          await db.saveMessage(businessId, sessionId, 'visitor', message, { channel: surface });
+          await db.saveMessage(businessId, sessionId, 'assistant', result.response, {
+            confidence: result.confidence,
+            escalated:  result.escalated,
+            source:     result.source,
+            channel:    surface,
           });
+
+          if (surface === 'widget' && !result.escalated && result.chunks.length > 0 && Math.random() < EVAL_SAMPLE_RATE) {
+            var contents = result.chunks.map(function (c) { return c.content; });
+            var scores = await evaluateAnswer({ query: message, answer: result.response, chunks: contents });
+            await db.insertEvalLog({
+              business_id: businessId, session_id: sessionId,
+              query: message, answer: result.response,
+              retrieved_chunks: JSON.stringify(result.chunks),
+              faithfulness_score: scores.faithfulness,
+              answer_relevance_score: scores.answer_relevance,
+              context_precision_score: scores.context_precision,
+              overall_score: (scores.faithfulness !== null && scores.answer_relevance !== null) ? (scores.faithfulness + scores.answer_relevance + (scores.context_precision || 0)) / 3 : null,
+              flagged_hallucination: scores.has_hallucination,
+            });
+          }
+        } catch (asyncErr) {
+          console.error('Chat side-effects failed:', asyncErr.message);
         }
-      } catch (asyncErr) {
-        console.error('Chat side-effects failed:', asyncErr.message);
-      }
-    });
-  } catch (err) {
-    console.error('Chat stream error:', err);
-    send({ token: "I'm having trouble right now. Please try again." });
-    send({ done: true, escalated: false, source: 'error', sessionId: sessionId, citations: [] });
-    res.end();
-  }
+      });
+      return result;
+    } catch (err) {
+      traces.recordError(err);
+      console.error(JSON.stringify({ event: 'rag.request_error', trace_id: trace.id, message: err.message }));
+      if (!sentText) send({ token: "I'm having trouble right now. Please try again." });
+      send({ done: true, error: 'Unable to answer. Please try again.', escalated: false, source: 'error', sessionId: sessionId, citations: [], traceId: trace.id });
+      res.end();
+      return { source: 'error' };
+    }
+  });
 }
 
 app.post('/api/chat/:businessId/stream', function (req, res) {
@@ -269,6 +284,30 @@ app.get('/api/team/:businessId/threads/:threadId', requireAdmin, async function 
     res.status(500).json({ error: err.message });
   }
 });
+
+function validTraceScope(req, res, next) {
+  if (!validBusinessId(req.params.businessId)) return res.status(400).json({ error: 'Invalid businessId' });
+  return next();
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+app.get('/api/dashboard/:businessId/traces', requireAdmin, validTraceScope, asyncRoute(async function (req, res) {
+  const limit = req.query.limit === undefined ? 50 : Number(req.query.limit);
+  const before = req.query.before || null;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100 || (before && (typeof before !== 'string' || !UUID.test(before)))) {
+    return res.status(400).json({ error: 'limit must be 1–100; before must be a trace UUID' });
+  }
+  res.set('Cache-Control', 'no-store');
+  res.json(await db.getRequestTraces(req.params.businessId, { limit, before, days: traces.retention().days }));
+}));
+
+app.get('/api/dashboard/:businessId/traces/:traceId', requireAdmin, validTraceScope, asyncRoute(async function (req, res) {
+  if (!UUID.test(req.params.traceId)) return res.status(400).json({ error: 'Invalid traceId' });
+  res.set('Cache-Control', 'no-store');
+  const trace = await db.getRequestTrace(req.params.businessId, req.params.traceId, traces.retention().days);
+  if (!trace) return res.status(404).json({ error: 'Trace not found' });
+  res.json(trace);
+}));
 
 app.get('/api/dashboard/:businessId/stats', requireAdmin, async function (req, res) {
   try {
@@ -322,16 +361,35 @@ app.use(function (err, req, res, next) {
   res.status(status).json({ error: status >= 500 ? 'Internal server error' : err.message });
 });
 
+module.exports = app;
+
+if (require.main === module) {
 const { chat: chatCfg } = require('./services/modelConfig');
 if (!process.env.LLM_API_KEY) {
   console.warn('[llm] LLM_API_KEY not set — calls to ' + chatCfg.baseURL + ' will fail unless that server needs no key.');
 }
 
 const { embed: embedCfg } = require('./services/modelConfig');
-db.ensureSchema(embedCfg.dim).catch(function (err) {
-  console.error('[db] ensureSchema failed:', err.message);
-});
+function bootSchema(attempt) {
+  db.ensureSchema(embedCfg.dim).catch(function (err) {
+    const delay = Math.min(30000, 1000 * 2 ** attempt);
+    console.error('[db] ensureSchema failed, retrying in ' + delay / 1000 + 's:', err.message);
+    setTimeout(bootSchema, delay, attempt + 1).unref();
+  });
+}
+bootSchema(0);
+
+function pruneTraces() {
+  const retention = traces.retention();
+  db.pruneRequestTraces(retention.days, retention.maxPerBusiness).catch((err) => {
+    console.error(JSON.stringify({ event: 'rag.trace_prune_failed', message: err.message }));
+  });
+}
+pruneTraces();
+setInterval(pruneTraces, 60 * 60 * 1000).unref();
 
 app.listen(port, function () {
   console.log('glazed server running on http://localhost:' + port);
 });
+
+}

@@ -44,11 +44,18 @@ test('a failed query returns 500 and the server stays up', async (t) => {
     ['GET', '/api/businesses/1/dashboard', auth],
     ['POST', '/api/ingest/1', auth],
     ['POST', '/api/sources/1', auth],
+    ['GET', '/api/dashboard/1/traces', auth],
+    ['GET', '/api/dashboard/1/traces/00000000-0000-4000-8000-000000000001', auth],
   ];
   for (const [method, url, headers] of failing) {
     const res = await fetch(base + url, { method, headers });
     assert.equal(res.status, 500, url);
     assert.deepEqual(await res.json(), { error: 'Internal server error' }, url);
+  }
+
+  assert.equal((await fetch(base + '/api/dashboard/1/traces')).status, 401);
+  for (const url of ['/api/dashboard/0/traces', '/api/dashboard/1/traces?limit=101', '/api/dashboard/1/traces?before=bad', '/api/dashboard/1/traces/bad']) {
+    assert.equal((await fetch(base + url, { headers: auth })).status, 400, url);
   }
 
   const create = await fetch(`${base}/api/businesses`, {

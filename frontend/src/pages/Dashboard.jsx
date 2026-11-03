@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import AdminTokenForm from '../components/AdminTokenForm';
+import TracePanel from '../components/TracePanel';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 
@@ -275,6 +276,7 @@ export default function Dashboard() {
             <a className="dashboard-nav-item dashboard-nav-item--active" href="#overview">Overview</a>
             <a className="dashboard-nav-item" href="#leads">Leads</a>
             <a className="dashboard-nav-item" href="#conversations">Conversations</a>
+            <a className="dashboard-nav-item" href="#traces">Traces</a>
             <a className="dashboard-nav-item" href="#embed">Embed</a>
             <Link className="dashboard-nav-item" to={`/team/${businessId}`}>Team chat</Link>
           </nav>
@@ -388,6 +390,8 @@ export default function Dashboard() {
             <div className="dashboard-empty-state"><h3>No conversations yet</h3><p>Paste the embed code on your site, or <Link to={`/embed/${businessId}`} target="_blank" rel="noopener noreferrer">test your chatbot</Link>.</p></div>
           )}
         </section>
+
+        <TracePanel key={businessId} businessId={businessId} adminToken={adminToken} onUnauthorized={() => setNeedToken(true)} />
 
         <section className="dashboard-embed-card" id="embed">
           <h2>Embed code</h2>

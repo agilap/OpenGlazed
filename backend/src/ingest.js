@@ -45,8 +45,6 @@ const PRIORITY_URL_PARTS = [
   'features',
 ];
 
-const MIN_CHARS = 80;
-
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -60,29 +58,6 @@ function normalizeWhitespace(text) {
     .trim();
 }
 
-function tokenizeWords(text) {
-  return (text.toLowerCase().match(/[a-z0-9]+/g) || []);
-}
-
-function jaccardSimilarity(a, b) {
-  const aSet = new Set(tokenizeWords(a));
-  const bSet = new Set(tokenizeWords(b));
-
-  if (aSet.size === 0 && bSet.size === 0) {
-    return 1;
-  }
-
-  let intersection = 0;
-  for (const token of aSet) {
-    if (bSet.has(token)) {
-      intersection += 1;
-    }
-  }
-
-  const union = aSet.size + bSet.size - intersection;
-  return union === 0 ? 0 : intersection / union;
-}
-
 const CHUNK_TOKEN_BUDGET = 320;
 const TOKENS_PER_CHAR = 0.25;
 
@@ -90,107 +65,57 @@ function estimateTokens(text) {
   return Math.ceil(text.length * TOKENS_PER_CHAR);
 }
 
+function splitToBudget(text, maxChars) {
+  const pieces = [];
+  let rest = text.trim();
+  while (rest.length > maxChars) {
+    const window = rest.slice(0, maxChars + 1);
+    const sentenceEnds = [...window.matchAll(/[.!?]\s+/g)];
+    const sentenceEnd = sentenceEnds.at(-1);
+    let cut = sentenceEnd ? sentenceEnd.index + 1 : window.lastIndexOf(' ');
+    if (cut < maxChars / 2) cut = maxChars;
+    pieces.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trim();
+  }
+  if (rest) pieces.push(rest);
+  return pieces;
+}
+
 function buildSemanticChunks(docs, businessId) {
   const chunks = [];
+  const seen = new Set();
+  const maxChars = CHUNK_TOKEN_BUDGET / TOKENS_PER_CHAR;
 
   for (const doc of docs) {
     const url = doc.url || null;
-    const breadcrumb = doc.heading ? `## ${doc.heading}\n\n` : '';
-    const paragraphs = (doc.content || '')
-      .split(/\n{2,}/)
-      .map((p) => normalizeWhitespace(p))
-      .filter(Boolean);
-
-    if (paragraphs.length === 0) continue;
-
+    const heading = normalizeWhitespace(doc.heading || '').slice(0, 240);
+    const breadcrumb = heading ? `## ${heading}\n\n` : '';
+    const bodyBudget = maxChars - breadcrumb.length;
+    const paragraphs = (doc.content || '').split(/\n{2,}/)
+      .map(normalizeWhitespace).filter(Boolean);
     let current = '';
-    let currentTokens = 0;
-
     const flush = () => {
-      const content = normalizeWhitespace(breadcrumb + current).trim();
-      if (content.length >= MIN_CHARS) {
+      if (!current) return;
+      const content = breadcrumb + current;
+      const key = JSON.stringify([url, content]);
+      if (!seen.has(key)) {
+        seen.add(key);
         chunks.push({
-          content,
-          level: 0,
-          source_url: url,
-          business_id: businessId,
-          token_count: estimateTokens(content),
-          heading: doc.heading || null,
+          content, level: 0, source_url: url, business_id: businessId,
+          token_count: estimateTokens(content), heading: doc.heading || null,
         });
       }
       current = '';
-      currentTokens = 0;
     };
-
-    for (const para of paragraphs) {
-      const paraTokens = estimateTokens(para);
-
-      if (currentTokens + paraTokens > CHUNK_TOKEN_BUDGET && current) {
-        flush();
+    for (const paragraph of paragraphs) {
+      for (const piece of splitToBudget(paragraph, bodyBudget)) {
+        if (current && current.length + 2 + piece.length > bodyBudget) flush();
+        current += (current ? '\n\n' : '') + piece;
       }
-
-      if (paraTokens > CHUNK_TOKEN_BUDGET) {
-        const sentences = para.match(/[^.!?]+[.!?]*\s*/g) || [para];
-        let buf = '';
-        let bufTokens = 0;
-        for (const sentence of sentences) {
-          const sTokens = estimateTokens(sentence);
-          if (bufTokens + sTokens > CHUNK_TOKEN_BUDGET && buf) {
-            chunks.push({
-              content: normalizeWhitespace(breadcrumb + buf).trim(),
-              level: 0,
-              source_url: url,
-              business_id: businessId,
-              token_count: estimateTokens(buf),
-              heading: doc.heading || null,
-            });
-            buf = '';
-            bufTokens = 0;
-          }
-          buf += sentence;
-          bufTokens += sTokens;
-        }
-        if (buf.trim().length >= MIN_CHARS) {
-          chunks.push({
-            content: normalizeWhitespace(breadcrumb + buf).trim(),
-            level: 0,
-            source_url: url,
-            business_id: businessId,
-            token_count: estimateTokens(buf),
-            heading: doc.heading || null,
-          });
-        }
-        continue;
-      }
-
-      current += (current ? '\n\n' : '') + para;
-      currentTokens += paraTokens;
     }
-
-    if (current) flush();
+    flush();
   }
-
-  return dedupeByJaccard(chunks);
-}
-
-function dedupeByJaccard(chunks) {
-  const kept = [];
-
-  for (const chunk of chunks) {
-    let duplicate = false;
-    for (const existing of kept) {
-      if (jaccardSimilarity(existing.content, chunk.content) > 0.9) {
-        duplicate = true;
-        break;
-      }
-    }
-
-    if (!duplicate) {
-      kept.push(chunk);
-    }
-  }
-
-  return kept;
+  return chunks;
 }
 
 function isSkippablePath(pathname) {
@@ -276,16 +201,10 @@ function extractCleanPageText(html) {
 
   $('nav, footer, header, script, style').remove();
 
-  const bodyText = $('body').text();
-  const normalized = normalizeWhitespace(bodyText);
-
-  const lines = normalized
-    .split(/\n+/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .filter((line) => line.split(/\s+/).length >= 5);
-
-  return normalizeWhitespace(lines.join('\n'));
+  $('br').replaceWith('\n');
+  $('p, li, h1, h2, h3, h4, h5, h6, div, section, article, tr, blockquote')
+    .append('\n\n');
+  return normalizeWhitespace($('body').text());
 }
 
 function collectInternalLinks(html, pageUrl, origin) {
@@ -395,9 +314,7 @@ async function scrapeSite(startUrl, maxPages = 50) {
     }
 
     const content = extractCleanPageText(html);
-    const wordCount = content ? content.split(/\s+/).length : 0;
-
-    if (wordCount > 100) {
+    if (content) {
       pages.push({
         url: currentUrl,
         content,
@@ -834,4 +751,4 @@ async function runIngest(businessId, url) {
   }
 }
 
-module.exports = { runIngest, ingestNormalized, storeLevel0Chunks };
+module.exports = { runIngest, ingestNormalized, storeLevel0Chunks, buildSemanticChunks, extractCleanPageText };

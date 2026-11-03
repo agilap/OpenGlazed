@@ -1,0 +1,151 @@
+{
+  "version": 1,
+  "timestamp": "2026-11-03T09:20:20.814Z",
+  "dataset": "synthetic-retrieval-regressions-v1",
+  "dataset_sha256": "e6c235ae606cd391599353a226c3f01d339e925748331769d9636618bd243777",
+  "retriever_sha256": "e3462a075fd892ad0caaedcf1c202b2483f595df25d56c73f096f763f3ca73c3",
+  "mode": "offline synthetic stage fixtures; production retriever; human-labelled answer proxy",
+  "k": 5,
+  "count": 8,
+  "retrieval": {
+    "hit_rate": 0.5,
+    "recall": 0.375,
+    "mrr": 0.5,
+    "ndcg": 0.39056332196267357
+  },
+  "answer": {
+    "faithfulness_proxy": 0.25,
+    "citation_correctness": 0.25,
+    "citation_coverage": 0.25
+  },
+  "cases": [
+    {
+      "id": "short-semantic",
+      "query": "Cancel my subscription?",
+      "contextIds": [
+        "2:101"
+      ],
+      "retrieval": {
+        "hit_rate": 0,
+        "recall": 0,
+        "mrr": 0,
+        "ndcg": 0
+      },
+      "answer": {
+        "faithfulness_proxy": 0,
+        "citation_correctness": 0,
+        "citation_coverage": 0
+      }
+    },
+    {
+      "id": "specific-what-is",
+      "query": "What is your refund deadline?",
+      "contextIds": [
+        "2:101"
+      ],
+      "retrieval": {
+        "hit_rate": 0,
+        "recall": 0,
+        "mrr": 0,
+        "ndcg": 0
+      },
+      "answer": null
+    },
+    {
+      "id": "summary-id-collision",
+      "query": "Pricing?",
+      "contextIds": [
+        "2:3"
+      ],
+      "retrieval": {
+        "hit_rate": 0,
+        "recall": 0,
+        "mrr": 0,
+        "ndcg": 0
+      },
+      "answer": null
+    },
+    {
+      "id": "exact-code",
+      "query": "Find the reset steps for error E4017 please",
+      "contextIds": [
+        "0:10",
+        "0:11",
+        "0:12",
+        "0:13",
+        "0:14"
+      ],
+      "retrieval": {
+        "hit_rate": 0,
+        "recall": 0,
+        "mrr": 0,
+        "ndcg": 0
+      },
+      "answer": null
+    },
+    {
+      "id": "duplicate-context",
+      "query": "Explain the warranty and battery replacement process please",
+      "contextIds": [
+        "0:30",
+        "0:31",
+        "0:32",
+        "0:33",
+        "0:34"
+      ],
+      "retrieval": {
+        "hit_rate": 1,
+        "recall": 0.5,
+        "mrr": 1,
+        "ndcg": 0.3373519727104165
+      },
+      "answer": null
+    },
+    {
+      "id": "control-dense-lexical",
+      "query": "Where can I see all invoice payment methods please",
+      "contextIds": [
+        "0:40"
+      ],
+      "retrieval": {
+        "hit_rate": 1,
+        "recall": 1,
+        "mrr": 1,
+        "ndcg": 1
+      },
+      "answer": {
+        "faithfulness_proxy": 0.5,
+        "citation_correctness": 0.5,
+        "citation_coverage": 0.5
+      }
+    },
+    {
+      "id": "control-lexical-outage",
+      "query": "How do I recover my password?",
+      "contextIds": [
+        "0:41"
+      ],
+      "retrieval": {
+        "hit_rate": 1,
+        "recall": 1,
+        "mrr": 1,
+        "ndcg": 1
+      },
+      "answer": null
+    },
+    {
+      "id": "control-overview",
+      "query": "Give me an overview",
+      "contextIds": [
+        "2:102"
+      ],
+      "retrieval": {
+        "hit_rate": 1,
+        "recall": 0.5,
+        "mrr": 1,
+        "ndcg": 0.7871546029909718
+      },
+      "answer": null
+    }
+  ]
+}

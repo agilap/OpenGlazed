@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { readChatStream } from '../chatStream';
+import { safeCitationUrl, colorText } from '../widgetConfig';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 
@@ -20,11 +21,11 @@ function CitationList({ citations }) {
   return (
     <div className="gzd-citations">
       <div className="gzd-citations-label">Sources</div>
-      {citations.map((c, i) => (
+      {citations.filter((c) => c && typeof c === 'object' && typeof c.content === 'string' && (!c.source || typeof c.source === 'string')).slice(0, 10).map((c, i) => (
         <div className="gzd-citation" key={`${c.source}-${i}`}>
-          <span className="gzd-citation-text">{c.content}</span>
+          <span className="gzd-citation-text">[{Number.isSafeInteger(c.index) && c.index > 0 ? c.index : i + 1}] {c.content}</span>
           {c.source && c.source !== 'knowledge base' && c.source !== 'business summary' && (
-            <span className="gzd-citation-src">{c.source}</span>
+            safeCitationUrl(c.source) ? <a className="gzd-citation-src" href={safeCitationUrl(c.source)} target="_blank" rel="noopener noreferrer">{c.source}</a> : <span className="gzd-citation-src">{c.source}</span>
           )}
         </div>
       ))}
@@ -32,7 +33,7 @@ function CitationList({ citations }) {
   );
 }
 
-export default function EmbeddableWidget({ businessId }) {
+export default function EmbeddableWidget({ businessId, config = {} }) {
   const [businessName, setBusinessName] = useState('Glazed');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -45,6 +46,12 @@ export default function EmbeddableWidget({ businessId }) {
   const [messages, setMessages] = useState([]);
   const [isTyping, setIsTyping] = useState(false);
   const [error, setError] = useState('');
+  const [retryMessage, setRetryMessage] = useState('');
+  const busyRef = useRef(false);
+  const nearBottomRef = useRef(true);
+  const requestRef = useRef(null);
+
+  useEffect(() => () => requestRef.current?.abort(), []);
   const [greetingReady, setGreetingReady] = useState(false);
   const messagesContainerRef = useRef(null);
   const inputRef = useRef(null);
@@ -132,7 +139,7 @@ export default function EmbeddableWidget({ businessId }) {
           {
             role: 'assistant',
             isGreeting: true,
-            content: `Hi there. I'm ${businessName}'s AI assistant. Ask me anything about our products, pricing, or services.`,
+            content: config.greeting || `Hi there. I'm ${businessName}'s AI assistant. Ask me anything about our products, pricing, or services.`,
             time: new Date(),
             source: 'greeting',
           },
@@ -143,10 +150,10 @@ export default function EmbeddableWidget({ businessId }) {
     }, 400);
 
     return () => clearTimeout(timeout);
-  }, [businessName, greetingReady]);
+  }, [businessName, greetingReady, config.greeting]);
 
   useEffect(() => {
-    if (messagesContainerRef.current) {
+    if (messagesContainerRef.current && nearBottomRef.current) {
       messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
     }
   }, [messages, isTyping]);
@@ -225,15 +232,18 @@ export default function EmbeddableWidget({ businessId }) {
     }
   }
 
-  async function sendMessage(event) {
-    event.preventDefault();
-    const outgoing = message.trim();
+  async function sendMessage(event, retry = '') {
+    event?.preventDefault();
+    const outgoing = (retry || message).trim();
 
-    if (!sessionId || !outgoing) {
+    if (!sessionId || !outgoing || busyRef.current) {
       return;
     }
 
-    const nextMessages = [...messages, { role: 'user', content: outgoing, time: new Date() }];
+    busyRef.current = true;
+    nearBottomRef.current = true;
+    setRetryMessage('');
+    const nextMessages = retry ? messages : [...messages, { role: 'user', content: outgoing, time: new Date() }];
     setMessages(nextMessages);
     setMessage('');
     setIsTyping(true);
@@ -245,8 +255,12 @@ export default function EmbeddableWidget({ businessId }) {
       { id: assistantId, role: 'assistant', content: '', streaming: true, time: new Date(), citations: [] },
     ]);
 
+    const controller = new AbortController();
+    requestRef.current = controller;
+    const timeout = setTimeout(() => controller.abort(), 120000);
     try {
       const response = await fetch(`${API_BASE}/api/chat/${businessId}/stream`, {
+        signal: controller.signal,
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -268,7 +282,7 @@ export default function EmbeddableWidget({ businessId }) {
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantId
-                ? { ...m, streaming: false, escalated: Boolean(evt.escalated), source: evt.source || null, citations: evt.citations || [] }
+                ? { ...m, streaming: false, escalated: Boolean(evt.escalated), source: evt.source || null, citations: Array.isArray(evt.citations) ? evt.citations : [] }
                 : m
             )
           );
@@ -277,11 +291,15 @@ export default function EmbeddableWidget({ businessId }) {
           }
         }
       });
-    } catch (_error) {
-      setError('Network error — please try again.');
-      setMessages((prev) => prev.filter((m) => m.id !== assistantId));
+    } catch (err) {
+      setError(err.name === 'AbortError' ? 'The request timed out. Please retry.' : err.message || 'Connection failed. Please retry.');
+      setRetryMessage(outgoing);
+      setMessages((prev) => prev.map((m) => m.id === assistantId ? { ...m, streaming: false, interrupted: true } : m));
     } finally {
+      clearTimeout(timeout);
+      busyRef.current = false;
       setIsTyping(false);
+      inputRef.current?.focus();
     }
   }
 
@@ -291,10 +309,11 @@ export default function EmbeddableWidget({ businessId }) {
   }
 
   return (
-    <div className="gzd-widget-root">
+    <div className="gzd-widget-root" data-theme={config.dark ? 'dark' : 'light'} style={{ '--gzd-accent': config.color || '#121218', '--gzd-accent-text': colorText(config.color || '#121218') }}>
       <style>{`
         .gzd-widget-root {
           height: 100vh;
+          height: 100dvh;
           width: 100%;
           min-width: 0;
           display: flex;
@@ -313,7 +332,7 @@ export default function EmbeddableWidget({ businessId }) {
         .gzd-widget-root button:disabled { background: #d3d3dc; cursor: not-allowed; }
         .gzd-widget-root input { min-height: 44px; min-width: 0; padding: 0 12px; background: #fff; color: #121218; border: 1px solid #c8c8d2; border-radius: 6px; }
         .gzd-widget-root input::placeholder { color: #6b6b78; }
-        .gzd-header { flex-shrink: 0; padding: 16px 20px; background: #121218; color: #f4f4f5; }
+        .gzd-header { flex-shrink: 0; padding: 16px 20px; background: var(--gzd-accent); color: var(--gzd-accent-text); }
         .gzd-name { margin: 0 0 4px; font-size: 16px; font-weight: 500; overflow-wrap: anywhere; }
         .gzd-online { display: flex; align-items: center; gap: 8px; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #a1a1aa; }
         .gzd-online-dot { width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: #34d399; }
@@ -323,7 +342,7 @@ export default function EmbeddableWidget({ businessId }) {
         .gzd-bubble-wrap { min-width: 0; max-width: 100%; display: flex; flex-direction: column; }
         .gzd-message-row.user .gzd-bubble-wrap { max-width: 80%; }
         .gzd-bubble { font-size: 14px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
-        .gzd-bubble.user { padding: 9px 13px; background: #121218; color: #f4f4f5; border-radius: 8px; }
+        .gzd-bubble.user { padding: 9px 13px; background: var(--gzd-accent); color: var(--gzd-accent-text); border-radius: 8px; }
         .gzd-bubble.streaming::after { content: '▌'; color: #494bd6; animation: gzd-blink 1s step-start infinite; }
         .gzd-time { margin-top: 4px; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #6b6b78; }
         .gzd-time.user { text-align: right; }
@@ -336,7 +355,7 @@ export default function EmbeddableWidget({ businessId }) {
         .gzd-escalation-sub { margin: 0; font-size: 13px; line-height: 1.45; color: #5c5c68; }
         .gzd-escalation-row { display: flex; gap: 8px; }
         .gzd-escalation-input { flex: 1; width: 0; }
-        .gzd-escalation-send { padding: 0 14px; background: #121218; color: #fff; border: 0; border-radius: 6px; font-weight: 600; }
+        .gzd-escalation-send { padding: 0 14px; background: var(--gzd-accent); color: var(--gzd-accent-text); border: 0; border-radius: 6px; font-weight: 600; }
         .gzd-gate { flex-shrink: 0; max-height: calc(100% - 78px); overflow-y: auto; padding: 20px; border-top: 1px solid #e4e4ea; display: flex; flex-direction: column; gap: 6px; }
         .gzd-gate h2 { margin: 0; font-size: 18px; font-weight: 500; letter-spacing: -0.01em; }
         .gzd-gate p { margin: 0 0 10px; font-size: 13px; line-height: 1.45; color: #5c5c68; }
@@ -344,12 +363,12 @@ export default function EmbeddableWidget({ businessId }) {
         .gzd-gate input { flex-shrink: 0; width: 100%; margin-bottom: 8px; }
         .gzd-gate input[type='email'] { margin-bottom: 12px; }
         .gzd-gate button { flex-shrink: 0; }
-        .gzd-gate button[type='submit'] { background: #121218; color: #fff; border: 0; border-radius: 6px; font-weight: 600; }
+        .gzd-gate button[type='submit'] { background: var(--gzd-accent); color: var(--gzd-accent-text); border: 0; border-radius: 6px; font-weight: 600; }
         .gzd-gate-skip { background: transparent; color: #5c5c68; border: 0; font-size: 13px; }
         .gzd-widget-root .gzd-gate-skip:hover { background: #f4f4f5; }
-        .gzd-input-bar { flex-shrink: 0; padding: 12px 16px; border-top: 1px solid #e4e4ea; display: flex; gap: 8px; }
+        .gzd-input-bar { flex-shrink: 0; padding: 12px 16px; padding-bottom: max(12px, env(safe-area-inset-bottom)); border-top: 1px solid #e4e4ea; display: flex; gap: 8px; }
         .gzd-input { flex: 1; width: 0; }
-        .gzd-send { flex: 0 0 44px; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; background: #121218; border: 0; border-radius: 6px; }
+        .gzd-send { flex: 0 0 44px; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; background: var(--gzd-accent); color: var(--gzd-accent-text); border: 0; border-radius: 6px; }
         .gzd-powered { flex-shrink: 0; margin: 0; padding: 0 16px 10px; text-align: center; font-size: 11px; color: #5c5c68; }
         .gzd-error { margin: 0 16px 10px; color: #b91c1c; font-size: 12px; overflow-wrap: anywhere; }
         .gzd-gate .gzd-error { margin: 0; color: #b91c1c; }
@@ -358,6 +377,13 @@ export default function EmbeddableWidget({ businessId }) {
         .gzd-citations-label { font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
         .gzd-citation-text { display: block; overflow-wrap: anywhere; }
         .gzd-citation-src { display: block; margin-top: 2px; font-family: 'JetBrains Mono', monospace; color: #494bd6; overflow-wrap: anywhere; }
+        .gzd-widget-root[data-theme='dark'] { background: #18181b; color: #f4f4f5; }
+        .gzd-widget-root[data-theme='dark'] input { background: #27272a; color: #fafafa; }
+        .gzd-widget-root[data-theme='dark'] :is(.gzd-time,.gzd-powered,.gzd-gate p,.gzd-gate label,.gzd-citations) { color: #d4d4d8; }
+        .gzd-widget-root[data-theme='dark'] .gzd-citation-src { color: #a5b4fc; }
+        .gzd-retry { margin: 0 16px 12px; min-height: 44px; }
+        .gzd-status { padding: 0 20px 8px; font-size: 12px; }
+        @media (max-width: 400px) { .gzd-messages,.gzd-gate { padding: 16px; } .gzd-widget-root input { font-size: 16px; } }
         @keyframes gzd-blink { 50% { opacity: 0; } }
         @keyframes gzd-typing-dots { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-4px); } }
         @keyframes gzd-message-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
@@ -374,11 +400,9 @@ export default function EmbeddableWidget({ businessId }) {
         </div>
       </header>
 
-      <section className="gzd-messages" ref={messagesContainerRef}>
+      <section className="gzd-messages" ref={messagesContainerRef} aria-label="Chat messages" role="log" aria-live="off" onScroll={(e) => { const el = e.currentTarget; nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}>
         {messages.map((msg, i) => {
           const isUser = msg.role === 'user';
-          const previous = i > 0 ? messages[i - 1] : null;
-          const showAssistantAvatar = !isUser && (!previous || previous.role !== 'assistant');
 
           return (
             <div key={msg.id || `${msg.role}-${i}-${msg.content.slice(0, 20)}`}>
@@ -388,6 +412,7 @@ export default function EmbeddableWidget({ businessId }) {
                     {msg.content}
                     {debugMode && !isUser && msg.source && <div className="gzd-debug">{msg.source}</div>}
                   </div>
+                  {msg.interrupted && <span className="gzd-time">Response interrupted</span>}
                   {!isUser && !msg.escalated && <CitationList citations={msg.citations} />}
                   <div className={`gzd-time ${isUser ? 'user' : 'assistant'}`}>{formatTime(msg.time)}</div>
                 </div>
@@ -415,9 +440,10 @@ export default function EmbeddableWidget({ businessId }) {
           );
         })}
 
-        {isTyping && <TypingIndicator />}
+        {isTyping && !messages.some((m) => m.streaming && m.content) && <TypingIndicator />}
       </section>
 
+      <div className="gzd-status" role="status" aria-live="polite">{isTyping ? 'Assistant is responding…' : messages.at(-1)?.role === 'assistant' && !messages.at(-1)?.isGreeting ? 'Response ready.' : ''}</div>
       {shouldShowGate ? (
         <form className="gzd-gate" onSubmit={startChat}>
           <h2>Before we start</h2>
@@ -449,18 +475,20 @@ export default function EmbeddableWidget({ businessId }) {
               className="gzd-input"
               placeholder="Type your message"
               aria-label="Message"
+              maxLength={4000}
               value={message}
               onChange={(e) => setMessage(e.target.value)}
             />
-            <button className="gzd-send" type="submit" disabled={!message.trim()} aria-label="Send message">
+            <button className="gzd-send" type="submit" disabled={!message.trim() || isTyping || !sessionId} aria-label="Send message">
               <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M5 12H19" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M13 6L19 12L13 18" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M5 12H19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M13 6L19 12L13 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </button>
           </form>
           <div className="gzd-powered">Powered by Glazed</div>
           {error && <p className="gzd-error" role="alert">{error}</p>}
+          {retryMessage && <button className="gzd-retry" type="button" disabled={isTyping} onClick={() => sendMessage(null, retryMessage)}>Retry message</button>}
         </>
       )}
     </div>

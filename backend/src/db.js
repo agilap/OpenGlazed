@@ -1,6 +1,7 @@
 'use strict';
 
 const path = require('path');
+const fs = require('node:fs');
 const { Pool } = require('pg');
 
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
@@ -10,7 +11,6 @@ const pool = new Pool({
   max: 10,
 });
 
-// pg emits this when an idle client loses its connection; with no listener it kills the process.
 pool.on('error', (err) => {
   console.error('[db] idle client error:', err.message);
 });
@@ -390,19 +390,26 @@ module.exports = {
   matchSummaries,
   plainFtsSearch,
   query,
-  getEmbeddingsForIds: async (ids) => {
+  getEmbeddingsForIds: async (ids, businessId) => {
     if (!Array.isArray(ids) || ids.length === 0) return new Map();
     const { rows } = await pool.query(
-      'SELECT id, embedding FROM chunks WHERE id = ANY($1) AND embedding IS NOT NULL',
-      [ids]
+      'SELECT id, embedding FROM chunks WHERE id = ANY($1) AND embedding IS NOT NULL' +
+        (businessId === undefined ? '' : ' AND business_id = $2'),
+      businessId === undefined ? [ids] : [ids, businessId]
     );
     const parse = (e) => (typeof e === 'string' ? JSON.parse(e) : e);
     return new Map(rows.map((r) => [String(r.id), parse(r.embedding)]));
   },
   ensureSchema,
+  ensureTraceSchema,
+  saveRequestTrace,
+  pruneRequestTraces,
+  getRequestTraces,
+  getRequestTrace,
 };
 
 async function ensureSchema(dim = 1536) {
+  await ensureTraceSchema();
   const DIM = Number(dim) || 1536;
   const current = await pool.query(
     "SELECT atttypmod AS m FROM pg_attribute WHERE attrelid = 'chunks'::regclass AND attname = 'embedding'"
@@ -456,4 +463,75 @@ async function ensureSchema(dim = 1536) {
       FROM summaries s WHERE s.business_id = p_business_id AND s.level = p_level AND s.embedding IS NOT NULL
       ORDER BY s.embedding <=> query_embedding LIMIT match_count;
     END; $$;`);
+}
+
+let traceSchemaPromise;
+function ensureTraceSchema() {
+  if (!traceSchemaPromise) {
+    const sql = fs.readFileSync(path.resolve(__dirname, '../migrations/001_request_traces.sql'), 'utf8');
+    traceSchemaPromise = pool.query(sql).catch((error) => { traceSchemaPromise = null; throw error; });
+  }
+  return traceSchemaPromise;
+}
+
+async function saveRequestTrace(trace, { days, maxPerBusiness }) {
+  await ensureTraceSchema();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock($1::bigint)', [trace.business_id]);
+    await client.query(
+      `INSERT INTO request_traces
+       (id, business_id, session_id, surface, query, source, model, duration_ms, token_usage, stages, retrievals, final_context, errors)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      [trace.id, trace.business_id, trace.session_id, trace.surface, trace.query, trace.source, trace.model,
+        trace.duration_ms, JSON.stringify(trace.token_usage), JSON.stringify(trace.stages),
+        JSON.stringify(trace.retrievals), JSON.stringify(trace.final_context), JSON.stringify(trace.errors)]
+    );
+    await client.query(
+      `DELETE FROM request_traces WHERE business_id = $1 AND
+       (created_at < now() - ($2 * interval '1 day') OR id IN (
+         SELECT id FROM request_traces WHERE business_id = $1
+         ORDER BY created_at DESC, id DESC OFFSET $3))`,
+      [trace.business_id, days, maxPerBusiness]
+    );
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally { client.release(); }
+}
+
+async function pruneRequestTraces(days, maxPerBusiness = 1000) {
+  await ensureTraceSchema();
+  await pool.query(
+    `DELETE FROM request_traces WHERE created_at < now() - ($1 * interval '1 day')
+     OR id IN (SELECT id FROM (
+       SELECT id, row_number() OVER (PARTITION BY business_id ORDER BY created_at DESC, id DESC) AS position
+       FROM request_traces) ranked WHERE position > $2)`, [days, maxPerBusiness]
+  );
+}
+
+async function getRequestTraces(businessId, { limit = 50, before = null, days = 7 } = {}) {
+  await ensureTraceSchema();
+  const { rows } = await pool.query(
+    `SELECT id, business_id, session_id, surface, query, source, model, duration_ms, token_usage,
+            jsonb_array_length(errors) AS error_count, created_at
+     FROM request_traces WHERE business_id = $1
+       AND created_at >= now() - ($4 * interval '1 day')
+       AND ($3::uuid IS NULL OR (created_at, id) < (
+         SELECT created_at, id FROM request_traces WHERE business_id = $1 AND id = $3))
+     ORDER BY created_at DESC, id DESC LIMIT $2`,
+    [businessId, limit, before, days]
+  );
+  return rows;
+}
+
+async function getRequestTrace(businessId, traceId, days = 7) {
+  await ensureTraceSchema();
+  const { rows } = await pool.query(
+    "SELECT * FROM request_traces WHERE business_id = $1 AND id = $2 AND created_at >= now() - ($3 * interval '1 day')",
+    [businessId, traceId, days]
+  );
+  return rows[0] || null;
 }

@@ -8,9 +8,9 @@ One agent, two surfaces: a **website widget** for customers and an internal **te
 
 A **hybrid retrieval pipeline** (dense + lexical + RAPTOR + rerank) — not a single vector lookup — grounds answers in your content, and every answer surfaces its citations so you can verify it.
 
-- URL scraper (Cheerio) → semantic chunking → local Postgres + pgvector
+- URL scraper (Cheerio) → bounded semantic chunking → local Postgres + pgvector
 - Embeddable chat widget (React + iframe) that shows the sources it used
-- **BlendedRAG retrieval**: dense (pgvector) + BM25 (Postgres FTS) fused with Reciprocal Rank Fusion (RRF=60), a RAPTOR summary layer, and a local cosine rerank — all on by default, no extra services
+- **Hybrid retrieval**: dense (pgvector) + lexical (Postgres FTS / `ts_rank_cd`) fused with Reciprocal Rank Fusion (RRF=60), optional overview summaries, and bounded context. No extra services; legacy cosine reranking is opt-in
 - **Tool-calling agent**: the model decides when to search the knowledge base, capture a lead, or escalate to a human (falls back to plain RAG on providers without tool calling)
 - **Persistent conversations**: history is stored server-side; the widget restores a visitor's chat on reload, and the dashboard lists recent conversations
 - **Team chat** (`/team/:id`): staff ask the same agent about the business *and* customer activity (recent conversations, leads)
@@ -23,7 +23,7 @@ A **hybrid retrieval pipeline** (dense + lexical + RAPTOR + rerank) — not a si
 - **Frontend:** React 19 + React Router + Vite
 - **Models:** any OpenAI-compatible API via the `openai` SDK (`LLM_*` / `EMBED_*` env vars)
 - **Agent:** `backend/src/services/agent.js` — a small tool-calling loop, no framework
-- **Rerank:** local cosine rerank over the fused candidates (uses the vectors already in the DB)
+- **Ranking:** hybrid RRF by default; optional local cosine rerank using stored vectors
 - **Database:** PostgreSQL + pgvector (runs locally via Docker — no cloud account needed)
 
 ## Project structure
@@ -120,8 +120,7 @@ EMBED_MODEL=text-embedding-3-small
 The agent uses tool calling. Providers or models without it fall back to the
 plain retrieve-then-answer path automatically.
 
-The vector schema auto-migrates to your embedding dim, so switching embedding
-models (768 / 1024 / 1536 / 3072) needs no manual SQL — but re-ingest afterwards.
+Keep the embedding model and dimension consistent with existing data. The existing schema helper attempts dimension changes, but populated vectors may reject an incompatible dimension; switching models requires a planned migration and re-ingestion. This upgrade does not rewrite existing vectors.
 
 ## Product flow
 
@@ -161,20 +160,86 @@ Aligned with the sales-conversion JTBD (used only if you later fine-tune):
 | UltraChat 200k | `HuggingFaceH4/ultrachat_200k` | Fluent multi-turn explanatory dialogue |
 | SQuAD 2.0 | `rajpurkar/squad_v2` | Extractive QA + "I don't know" behaviour |
 
-## Retrieval architecture (BlendedRAG)
+## Retrieval architecture
 
-`backend/src/services/retriever.js` implements the hybrid pipeline:
+`backend/src/services/retriever.js` keeps the existing hybrid pipeline, with these fixes:
 
-1. **Query analysis** — `detectQueryLevel` classifies the question (lookup / explanatory / comparison) to bias retrieval.
-2. **Dense retrieval** — pgvector `match_chunks` over embeddings (SQL function in `db/init.sql`).
-3. **Lexical retrieval** — BM25 via Postgres FTS (`match_chunks_fts`), run on both the raw and a rewritten query, then merged.
-4. **Reciprocal Rank Fusion** — dense + BM25 lists fused with RRF (k=60).
-5. **RAPTOR layer** — the level-2 summary chunk (pre-built during ingestion) is surfaced as additional context.
-6. **Rerank** — fused candidates are reranked by cosine similarity to the query embedding; falls back to RRF order if embeddings are unavailable.
-7. **Confidence gate** — `assessConfidence` decides whether generation is allowed; the chat response carries a `source` (`model` vs `retriever`) so you can verify which path answered.
+1. Every query searches source chunks. Explicit overview questions additionally search RAPTOR summaries; short factual questions no longer search summaries exclusively.
+2. Dense pgvector retrieval embeds the original question. Lexical retrieval uses PostgreSQL English full-text search and `ts_rank_cd` (not BM25).
+3. RRF (k=60) combines the rankings, using separate identities for source chunks and summaries, preserving per-stage scores. The old cosine-only rerank repeats the dense signal and can erase exact lexical matches, so it is now opt-in.
+4. Context deduplicates normalized text and admits at most five chunks, 4,000 characters per chunk and 12,000 total. Overview text uses this same budget. Agent searches share a 24,000-character budget across turns in one request, with stable source labels.
+5. Missing embeddings degrade to lexical retrieval. Missing optional rewrite/rerank capabilities preserve the original query or fused ranking. Empty results escalate; nonempty results receive an uncalibrated `medium` confidence rather than pretending RRF is a probability.
+
+Chunking preserves short FAQ facts, paragraph boundaries, provenance and a heading-inclusive size bound. These changes apply on the next ingest/re-ingest; existing data stays intact. Character budgets approximate token usage and do not guarantee a particular model's token limit.
+
+Optional backend environment variables:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `RAG_QUERY_REWRITE` | `false` | Plain-RAG fallback can expand the lexical query using the existing chat model; the original question still drives dense retrieval. The tool agent supplies its own focused search query. |
+| `RAG_COSINE_RERANK` | `false` | Enable legacy cosine-only reranking for comparison; may reduce lexical relevance. No additional model required. |
+| `LLM_STREAM_USAGE` | `false` | Request streaming token usage via `stream_options.include_usage`. Enable only for compatible providers. Unknown usage is stored as `null`, never estimated. |
+| `TRACE_RETENTION_DAYS` | `7` | Maximum trace age, positive integer. |
+| `TRACE_MAX_PER_BUSINESS` | `1000` | Maximum retained traces per bot, positive integer. |
+
+## Evaluation
+
+```bash
+# Offline regression fixtures: no database or model/API key required
+npm run eval -w backend -- --out eval/reports/after.json --baseline eval/reports/before.json
+# Your real corpus, lexical retrieval only, no LLM or embedding key
+npm run eval -w backend -- --live --lexical --dataset eval/customer-golden.json --out eval/reports/customer.json
+```
+
+The [golden dataset format and commands](backend/eval/README.md) cover hit rate/recall@k, MRR, nDCG, human-labelled faithfulness and citation metrics, and baseline comparisons. `--live` evaluates your actual corpus with your configured embeddings; `--judge` optionally scores saved answers with the existing chat provider. Neither is enabled by default. Reports include source/dataset hashes, selected IDs, per-case metrics and baseline deltas.
+
+The checked-in [before/after results](backend/eval/reports/RESULTS.md) use eight synthetic regression/control fixtures and two annotated saved answers. Hit rate@5 improves 0.50 → 1.00, recall 0.375 → 0.9375, MRR 0.50 → 0.9375 and nDCG 0.390563 → 0.850284. The overview control regresses in nDCG (0.787155 → 0.337352); the exact-code answer reaches rank 2 rather than rank 1. These are orchestration regression results, not measured production relevance or generated-answer quality. Use representative customer questions and human judgments for deployment decisions.
+
+## Local request traces
+
+Each validated chat request records its query, raw stage candidates, dense/lexical/fused/rerank scores, selected context, model, available token usage, stage latency, source (`model`, `retriever`, or `error`) and errors in local Postgres. Scores unavailable for a stage are `null`. Structured logs carry request IDs and summaries; no telemetry service receives traces. Model calls still use the provider you configure in `LLM_*` / `EMBED_*`.
+
+Existing databases receive the additive, idempotent `backend/migrations/001_request_traces.sql` automatically at startup and lazily before trace access. It can also be applied manually:
+
+```bash
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/migrations/001_request_traces.sql
+```
+
+`db/init.sql` includes the same additions for new databases. No existing rows or embeddings are dropped or rewritten by this migration. Startup/hourly cleanup removes expired traces and excess rows per bot; inserts also enforce age/count retention transactionally per bot. Reads exclude expired traces immediately. Cleanup requires the backend to be running; expiry is not an exact-time deletion guarantee. Existing messages and `eval_logs` have their existing lifecycle and are outside trace retention.
+
+All trace endpoints require `Authorization: Bearer <ADMIN_TOKEN>` and scope every lookup, including pagination cursors, to the bot:
+
+- `GET /api/dashboard/:businessId/traces?limit=50&before=<trace UUID>` — newest first, limit 1–100. Omit `before` for the first page; pass the last row's ID for the next page.
+- `GET /api/dashboard/:businessId/traces/:traceId` — full trace; 404 when absent, expired or belonging to another bot.
+
+Responses use `Cache-Control: no-store`. The existing installation-wide admin token grants access to every bot; it is not a per-tenant credential. Dashboard → **Traces** shows the most recent 25 requests and expandable details. Traces contain private conversations and retrieved documents; configure retention for your deployment.
+
+## Embeddable widget
+
+Existing snippets remain valid:
+
+```html
+<script src="https://chat.example.com/widget.js" data-business-id="123"></script>
+```
+
+Optional configuration:
+
+```html
+<script src="https://chat.example.com/widget.js"
+  data-business-id="123"
+  data-primary-color="#494bd6"
+  data-theme="dark"
+  data-position="left"
+  data-greeting="How can we help?"
+  data-app-url="https://app.example.com"></script>
+```
+
+The iframe defaults to the script's origin, so cross-domain embeds work behind a shared frontend/backend reverse proxy. For split hosting, set `data-app-url` to the frontend origin and configure `VITE_API_BASE` / backend CORS for that frontend. Colors accept six-digit hex; theme is `light` or `dark`; position is `left` or `right`. Direct iframes support `?color=%23494bd6&theme=dark&greeting=Hello`.
+
+The launcher is dependency-free (about 5 KB unminified). The widget preserves partial streams, detects interrupted responses, offers explicit retry, displays numbered source links, supports mobile viewports and reduced motion, and returns focus on close/Escape. Untrusted model text is rendered as text; only HTTP(S) source URLs become links. Citation links expose retrieved sources and are not proof that every generated claim is supported. Retrying resends the question; it does not undo agent tool side effects.
 
 ## Notes
 
-- Database is self-hosted PostgreSQL + pgvector (via `docker compose up` + `db/init.sql`).
-- Re-ingest is incremental: only changed/added chunks are re-embedded, unchanged chunks keep their embeddings, and deleted pages are purged (diffed by a content hash per source).
-- Training/fine-tuning is out of scope. Only a sample of widget answers (`EVAL_SAMPLE_RATE`, default 10%) is scored by the LLM judge, to keep per-message cost down.
+- Re-ingest is incremental: changed/added chunks are embedded; unchanged hashes retain their embeddings.
+- English FTS, approximate chunk/token budgets, synthetic evaluation coverage, and model citation compliance remain limitations. JSON/PDF/DOCX source parser stubs and the existing sitemap ingestion limitations were audited but not expanded in this change.
+- Existing sampled answer judging uses `EVAL_SAMPLE_RATE` (default 0.1); set `0` to disable those extra model calls. The repeatable eval harness is separate and offline by default.
