@@ -35,6 +35,8 @@ export default function Dashboard() {
   const [error, setError] = useState(null);
   const [adminToken, setAdminToken] = useState(() => localStorage.getItem('glazed_admin_token') || '');
   const [needToken, setNeedToken] = useState(false);
+  const [signedIn, setSignedIn] = useState(false);
+  useEffect(() => { fetch(`${API_BASE}/api/auth/me`, { credentials: 'include' }).then((r) => setSignedIn(r.ok)).catch(() => {}); }, []);
 
   const saveToken = (value) => {
     setAdminToken(value);
@@ -45,7 +47,7 @@ export default function Dashboard() {
   async function authedFetch(url, options = {}) {
     const headers = { ...(options.headers || {}) };
     if (adminToken) headers['Authorization'] = `Bearer ${adminToken}`;
-    const response = await fetch(url, { ...options, headers });
+    const response = await fetch(url, { ...options, headers, credentials: 'include' });
     if (response.status === 401) setNeedToken(true);
     return response;
   }
@@ -150,10 +152,10 @@ export default function Dashboard() {
   }, [businessId]);
 
   useEffect(() => {
-    if (adminToken && businessId) {
+    if ((adminToken || signedIn) && businessId) {
       reload();
     }
-  }, [adminToken]);
+  }, [adminToken, signedIn]);
 
   async function openTranscript(lead) {
     setSelectedLead(lead);
@@ -287,7 +289,7 @@ export default function Dashboard() {
             <span className="dashboard-status-dot" aria-hidden="true" />
             ingest / {ingestStatus.status || 'idle'}
           </span>
-          <Link to="/" className="dashboard-back-link">← Back to home</Link>
+          {signedIn ? <Link to="/account" className="dashboard-back-link">← Your workspace</Link> : <Link to="/" className="dashboard-back-link">← Back to home</Link>}
         </div>
       </aside>
 
@@ -305,7 +307,7 @@ export default function Dashboard() {
           </div>
         </header>
 
-        {(!adminToken || needToken) && tokenForm}
+        {((!adminToken && !signedIn) || needToken) && tokenForm}
 
         <section className="dashboard-stats-grid" aria-label="Stats">
           <article className="dashboard-stat-card">

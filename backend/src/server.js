@@ -8,6 +8,7 @@ const cors    = require('cors');
 const { evaluateAnswer } = require('./services/generator');
 const { runAgent }  = require('./services/agent');
 const db            = require('./db');
+const auth = require('./auth');
 const traces = require('./services/traces');
 const { runIngest, ingestNormalized } = require('./ingest');
 const { ingestSource, SUPPORTED } = require('./sources');
@@ -24,13 +25,22 @@ if (!ADMIN_TOKEN) {
   console.log('[auth] ADMIN_TOKEN not set — generated ephemeral token: ' + ADMIN_TOKEN);
 }
 
-function requireAdmin(req, res, next) {
-  const header = req.headers['authorization'] || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-  if (token && token === ADMIN_TOKEN) {
-    return next();
-  }
-  return res.status(401).json({ error: 'Unauthorized' });
+async function requireAdmin(req, res, next) {
+  try {
+    const header = req.headers.authorization || '';
+    const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+    if (token && token === ADMIN_TOKEN) return next();
+    const user = await auth.getUser(req);
+    if (!user) return res.status(401).json({ error: 'Sign in required' });
+    const businessId = req.params.businessId || req.params.id;
+    if (businessId) {
+      if (!/^[1-9]\d{0,18}$/.test(businessId)) return res.status(404).json({ error: 'Business not found' });
+      const owned = await db.query('SELECT 1 FROM businesses WHERE id = $1 AND owner_id = $2', [businessId, user.id]);
+      if (!owned.rowCount) return res.status(404).json({ error: 'Business not found' });
+    }
+    req.user = user;
+    next();
+  } catch (err) { next(err); }
 }
 
 function asyncRoute(handler) {
@@ -39,7 +49,11 @@ function asyncRoute(handler) {
   };
 }
 
-app.use(cors({ origin: allowedOrigin }));
+app.use(cors({ origin: allowedOrigin, credentials: true }));
+app.use(function (req, res, next) {
+  if ((req.path.startsWith('/api/auth/') || (req.headers.cookie || '').includes('og_session=')) && !['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.headers.origin && req.headers.origin !== allowedOrigin && req.headers.origin !== req.protocol + '://' + req.get('host')) return res.status(403).json({ error: 'Invalid origin' });
+  next();
+});
 app.use(express.json({ limit: '25mb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
@@ -51,6 +65,47 @@ app.use(function (req, res, next) {
   next();
 });
 
+const authAttempts = new Map();
+function limitAuth(req, res, next) {
+  const now = Date.now();
+  const key = req.ip;
+  const recent = (authAttempts.get(key) || []).filter((time) => now - time < 15 * 60 * 1000);
+  if (recent.length >= 20) return res.status(429).json({ error: 'Too many attempts. Try again later.' });
+  recent.push(now); authAttempts.set(key, recent); next();
+}
+function credentials(body) {
+  const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+  const password = typeof body.password === 'string' ? body.password : '';
+  return { email, password, valid: email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && password.length >= 12 && password.length <= 1024 };
+}
+app.post('/api/auth/signup', limitAuth, asyncRoute(async function (req, res) {
+  const { email, password, valid } = credentials(req.body || {});
+  if (!valid) return res.status(400).json({ error: 'Enter a valid email and a password of at least 12 characters.' });
+  await auth.ensureAuthSchema();
+  const hash = await auth.hashPassword(password);
+  const result = await db.query('INSERT INTO users (email, password_hash) VALUES ($1, $2) ON CONFLICT (email) DO NOTHING RETURNING id, email', [email, hash]);
+  if (!result.rowCount) return res.status(409).json({ error: 'An account with this email already exists.' });
+  await auth.createSession(res, result.rows[0].id);
+  res.status(201).json({ user: result.rows[0] });
+}));
+app.post('/api/auth/login', limitAuth, asyncRoute(async function (req, res) {
+  const { email, password } = credentials(req.body || {});
+  if (email.length > 254 || password.length > 1024) return res.status(401).json({ error: 'Invalid email or password.' });
+  await auth.ensureAuthSchema();
+  const result = await db.query('SELECT id, email, password_hash FROM users WHERE email = $1', [email]);
+  const user = result.rows[0];
+  if (!user || !await auth.verifyPassword(password, user.password_hash)) return res.status(401).json({ error: 'Invalid email or password.' });
+  await auth.createSession(res, user.id);
+  res.json({ user: { id: user.id, email: user.email } });
+}));
+app.get('/api/auth/me', asyncRoute(async function (req, res) {
+  const user = await auth.getUser(req);
+  if (!user) return res.status(401).json({ error: 'Sign in required' });
+  const businesses = await db.query('SELECT id, name, url, ingest_status FROM businesses WHERE owner_id = $1 ORDER BY id DESC', [user.id]);
+  res.set('Cache-Control', 'no-store').json({ user, businesses: businesses.rows });
+}));
+app.post('/api/auth/logout', asyncRoute(async function (req, res) { await auth.logout(req, res); res.status(204).end(); }));
+
 app.post('/api/businesses', requireAdmin, asyncRoute(async function (req, res) {
   var name = req.body.name;
   var url  = req.body.url;
@@ -59,7 +114,9 @@ app.post('/api/businesses', requireAdmin, asyncRoute(async function (req, res) {
     return res.status(400).json({ error: 'name and url are required' });
   }
 
-  var business = await db.insertBusiness(name, url);
+  var business = req.user
+    ? (await db.query('INSERT INTO businesses (name, url, owner_id) VALUES ($1, $2, $3) RETURNING *', [name, url, req.user.id])).rows[0]
+    : await db.insertBusiness(name, url);
 
   if (!business) {
     return res.status(500).json({ error: 'failed to create business' });

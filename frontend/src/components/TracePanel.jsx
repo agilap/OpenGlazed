@@ -18,7 +18,7 @@ export default function TracePanel({ businessId, adminToken, onUnauthorized }) {
     setDetailId(null);
     setTraces([]);
     fetch(`${API_BASE}/api/dashboard/${businessId}/traces?limit=25`, {
-      headers: { Authorization: `Bearer ${adminToken}` }, signal: controller.signal,
+      headers: adminToken ? { Authorization: `Bearer ${adminToken}` } : {}, credentials: 'include', signal: controller.signal,
     }).then(async (response) => {
       if (response.status === 401) onUnauthorized();
       if (!response.ok) throw new Error('Could not load traces. Check your admin token and retry.');
@@ -35,7 +35,7 @@ export default function TracePanel({ businessId, adminToken, onUnauthorized }) {
     const controller = new AbortController();
     setSelected(null);
     fetch(`${API_BASE}/api/dashboard/${businessId}/traces/${encodeURIComponent(detailId)}`, {
-      headers: { Authorization: `Bearer ${adminToken}` }, signal: controller.signal,
+      headers: adminToken ? { Authorization: `Bearer ${adminToken}` } : {}, credentials: 'include', signal: controller.signal,
     }).then(async (response) => {
       if (response.status === 401) onUnauthorized();
       if (!response.ok) throw new Error('Could not load trace details.');

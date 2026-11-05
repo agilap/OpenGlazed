@@ -52,9 +52,14 @@ export default function Onboarding() {
   const [adminToken, setAdminToken] = useState(() => localStorage.getItem('glazed_admin_token') || '');
   const [needToken, setNeedToken] = useState(false);
   const [tokenRejected, setTokenRejected] = useState(false);
+  const [signedIn, setSignedIn] = useState(false);
   const pollCountRef = useRef(0);
   const celebratedRef = useRef(false);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/auth/me`, { credentials: 'include' }).then((r) => setSignedIn(r.ok)).catch(() => {});
+  }, []);
 
   const businessId = result?.businessId || null;
   const showProgress = Boolean(businessId);
@@ -215,6 +220,7 @@ export default function Onboarding() {
     try {
       const response = await fetch(`${API_BASE}/api/businesses`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
@@ -265,6 +271,7 @@ export default function Onboarding() {
         .ob2-page a { color: inherit; text-decoration: none; }
         .ob2-page a:hover { color: #494bd6; }
         .ob2-dark a:hover, .ob2-card a, .ob2-card a:hover { color: #c0c1ff; }
+        .ob2-note a { text-decoration: underline; }
         .ob2-page :is(a, button, input):focus-visible { outline: 3px solid #8083ff; outline-offset: 4px; }
         .ob2-page :is(section[id], article[id], div[id]) { scroll-margin-top: 24px; }
         .ob2-tick { position: relative; }
@@ -320,6 +327,7 @@ export default function Onboarding() {
         <a href="#features" style={{"padding": "13px 0"}}>Features</a>
         <a href="#self-host" style={{"padding": "13px 0"}}>Self-host</a>
         <a href="https://github.com/agilap/OpenGlazed" style={{"padding": "13px 0"}}>GitHub</a>
+        <a href={signedIn ? '/account' : '/login'} style={{"display": "inline-flex", "alignItems": "center", "height": "36px", "padding": "0 14px", "border": "1px solid #d3d3dc", "borderRadius": "6px", "fontWeight": "600"}}>{signedIn ? 'My workspace' : 'Sign in'}</a>
       </nav>
     </header>
 
@@ -365,7 +373,7 @@ export default function Onboarding() {
                 <input id="admin-token" className="ob2-url" type="password" autoComplete="off" value={adminToken}
                   onChange={(e) => { setAdminToken(e.target.value.trim()); setTokenRejected(false); }}
                   aria-invalid={tokenRejected} aria-describedby="admin-token-note" required />
-                <p id="admin-token-note" className="ob2-note" style={{ margin: '0 0 16px' }}>This server is protected. The token is in backend/.env, or printed in the backend log at startup.</p>
+                <p id="admin-token-note" className="ob2-note" style={{ margin: '0 0 16px' }}><a href="/login">Sign in</a> or <a href="/signup">create an account</a> to index a site. Admins can paste the ADMIN_TOKEN from backend/.env instead.</p>
                 {tokenRejected && <p className="ob2-error" role="alert">That token was rejected.</p>}
               </>
             )}

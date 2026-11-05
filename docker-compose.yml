@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: glazed
       POSTGRES_DB: glazed
     ports:
-      - "5432:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-55434}:5432"
     volumes:
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
       - glazed_pgdata:/var/lib/postgresql/data

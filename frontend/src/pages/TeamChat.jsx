@@ -9,6 +9,8 @@ export default function TeamChat() {
   const { id: businessId } = useParams();
   const [adminToken, setAdminToken] = useState(() => localStorage.getItem('glazed_admin_token') || '');
   const [needToken, setNeedToken] = useState(false);
+  const [signedIn, setSignedIn] = useState(false);
+  useEffect(() => { fetch(`${API_BASE}/api/auth/me`, { credentials: 'include' }).then((r) => setSignedIn(r.ok)).catch(() => {}); }, []);
   const [threads, setThreads] = useState([]);
   const [threadId, setThreadId] = useState(() => crypto.randomUUID());
   const [messages, setMessages] = useState([]);
@@ -20,7 +22,7 @@ export default function TeamChat() {
   async function authedFetch(url, options = {}) {
     const headers = { ...(options.headers || {}) };
     if (adminToken) headers['Authorization'] = `Bearer ${adminToken}`;
-    const response = await fetch(url, { ...options, headers });
+    const response = await fetch(url, { ...options, headers, credentials: 'include' });
     if (response.status === 401) setNeedToken(true);
     return response;
   }
@@ -33,8 +35,8 @@ export default function TeamChat() {
   }
 
   useEffect(() => {
-    if (adminToken) loadThreads();
-  }, [businessId, adminToken]);
+    if (adminToken || signedIn) loadThreads();
+  }, [businessId, adminToken, signedIn]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: 'end' });
@@ -128,7 +130,7 @@ export default function TeamChat() {
           <h1>{threads.find((thread) => thread.session_id === threadId)?.title || 'New chat'}</h1>
           <span>team chat</span>
         </header>
-        {(!adminToken || needToken) && (
+        {((!adminToken && !signedIn) || needToken) && (
           <AdminTokenForm
             id="team-admin-token"
             label="Team chat is protected. Paste your ADMIN_TOKEN."

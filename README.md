@@ -53,11 +53,11 @@ The project uses a local PostgreSQL + pgvector instance. `docker-compose.yml` bo
 and `db/init.sql` creates the schema + retrieval functions automatically on first start.
 
 ```bash
-docker compose up -d        # Postgres + pgvector on localhost:5432
+docker compose up -d        # Postgres + pgvector on localhost:55434
 cp backend/.env.example backend/.env   # DATABASE_URL already points at the local DB
 ```
 
-The default connection string is `postgresql://glazed:glazed@localhost:5432/glazed`.
+The default connection string is `postgresql://glazed:glazed@localhost:55434/glazed`.
 To use a different Postgres, set `DATABASE_URL` in `backend/.env`.
 
 ## Install all npm packages
@@ -243,3 +243,11 @@ The launcher is dependency-free (about 5 KB unminified). The widget preserves pa
 - Re-ingest is incremental: changed/added chunks are embedded; unchanged hashes retain their embeddings.
 - English FTS, approximate chunk/token budgets, synthetic evaluation coverage, and model citation compliance remain limitations. JSON/PDF/DOCX source parser stubs and the existing sitemap ingestion limitations were audited but not expanded in this change.
 - Existing sampled answer judging uses `EVAL_SAMPLE_RATE` (default 0.1); set `0` to disable those extra model calls. The repeatable eval harness is separate and offline by default.
+
+## Accounts and local database
+
+Open `/signup` to create an account, then sign in at `/login`. Each account can access the businesses it creates from its workspace. Sessions are stored in PostgreSQL and expire after seven days. The existing `ADMIN_TOKEN` remains available for administrative and legacy access; businesses created with that token do not automatically belong to an account.
+
+The database is persisted in the `glazed_pgdata` Docker volume and is bound to localhost on port 55434 by default. Set `POSTGRES_PORT` when starting Compose to use a different host port, and update `DATABASE_URL` in `backend/.env` accordingly for a backend running outside Docker. Do not run database tests against data you need to retain: use a separate database initialized with `db/init.sql`.
+
+For HTTPS deployments, set `COOKIE_SECURE=true` and configure `FRONTEND_ORIGIN` to the exact frontend origin. Account recovery and email verification are not yet implemented.

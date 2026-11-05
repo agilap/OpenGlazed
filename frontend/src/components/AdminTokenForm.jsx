@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 
 export default function AdminTokenForm({ id, label, initialToken, rejected, onSubmit }) {
   const [draft, setDraft] = useState(initialToken);
@@ -11,7 +12,7 @@ export default function AdminTokenForm({ id, label, initialToken, rejected, onSu
         onSubmit(draft.trim());
       }}
     >
-      <label htmlFor={id}>{label} It's in backend/.env, or printed in the backend log at startup.</label>
+      <label htmlFor={id}>{label} You can also <Link to="/login">sign in</Link> with your account.</label>
       <input
         id={id}
         type="password"

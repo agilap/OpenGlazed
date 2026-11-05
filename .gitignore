@@ -70,3 +70,7 @@ dist/
 # oh-my-claudecode runtime state
 .omc/
 .github/
+
+# Local agent configuration
+/.agents/
+/.claude/
