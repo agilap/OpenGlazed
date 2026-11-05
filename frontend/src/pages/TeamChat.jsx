@@ -39,7 +39,7 @@ export default function TeamChat() {
   }, [businessId, adminToken, signedIn]);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: 'end' });
+    if (messages.length) endRef.current?.scrollIntoView({ block: 'end' });
   }, [messages]);
 
   function saveToken(value) {
@@ -104,7 +104,7 @@ export default function TeamChat() {
         <div>
           <div className="dashboard-wordmark">Glazed AI</div>
           <button className="dashboard-action-primary team-new" type="button" onClick={newThread}>New chat</button>
-          <p className="team-recent-label">Recent</p>
+          <p className="team-recent-label">Your conversations</p>
           <nav className="dashboard-nav team-threads" aria-label="Recent chats">
             {threads.length === 0 ? <p className="dashboard-empty">No chats yet.</p> : null}
             {threads.map((t) => (
@@ -128,7 +128,7 @@ export default function TeamChat() {
       <main className="dashboard-main team-main">
         <header className="team-header">
           <h1>{threads.find((thread) => thread.session_id === threadId)?.title || 'New chat'}</h1>
-          <span>team chat</span>
+          <span className="team-header-label"><span className="team-status-dot" /> Internal workspace</span>
         </header>
         {((!adminToken && !signedIn) || needToken) && (
           <AdminTokenForm
@@ -149,16 +149,21 @@ export default function TeamChat() {
 
         <div className="team-messages">
           {messages.length === 0 ? (
-            <p className="dashboard-empty">
-              Ask about your business or your customers — e.g. “What did visitors ask about pricing this week?”
-            </p>
+            <div className="team-welcome">
+              <div className="team-welcome-mark" aria-hidden="true">&gt;_</div>
+              <p className="team-eyebrow">YOUR KNOWLEDGE, WITH CONTEXT</p>
+              <h2>What would you like to know?</h2>
+              <p>Ask about your business or customer conversations. The assistant can draw on your indexed content and recent activity.</p>
+              <button type="button" className="team-suggestion" onClick={() => setInput('What did visitors ask about pricing this week?')}>What did visitors ask about pricing this week? <span aria-hidden="true">↗</span></button>
+            </div>
           ) : null}
           {messages.map((m, i) => (
             <div key={i} className={`team-message ${m.role === 'user' ? 'user' : 'assistant'}`}>
-              <div>{m.content || (m.streaming ? '…' : '')}{m.streaming && <span className="team-cursor" aria-hidden="true">▌</span>}</div>
+              <div className="team-message-label">{m.role === 'user' ? 'You' : 'Assistant'}</div>
+              <div className="team-message-content">{m.content || (m.streaming ? 'Searching and thinking…' : '')}{m.streaming && <span className="team-cursor" aria-hidden="true">▌</span>}</div>
               {Array.isArray(m.citations) && m.citations.length > 0 && (
-                <div className="team-sources">
-                  {m.citations.map((c, j) => <span key={j}>{c.source}</span>)}
+                <div className="team-sources" aria-label="Sources">
+                  <strong>Sources</strong>{m.citations.map((c, j) => <span key={j}>{c.source}</span>)}
                 </div>
               )}
             </div>
@@ -169,8 +174,9 @@ export default function TeamChat() {
         {error ? <p className="team-error" role="alert">{error}</p> : null}
 
         <form className="team-input" onSubmit={send}>
-          <input
-            className="dashboard-token-input"
+          <textarea
+            className="dashboard-token-input" rows="1"
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.form.requestSubmit(); } }}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Message the team assistant"
@@ -180,6 +186,7 @@ export default function TeamChat() {
           <button className="dashboard-action-primary" type="submit" disabled={busy || !input.trim()}>
             {busy ? 'Thinking…' : 'Send'}
           </button>
+          <span className="team-input-hint">Enter to send · Shift + Enter for a new line</span>
         </form>
       </main>
     </div>

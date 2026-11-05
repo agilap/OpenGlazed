@@ -51,8 +51,8 @@ export default function TracePanel({ businessId, adminToken, onUnauthorized }) {
         <h2 id="traces-heading">Request traces</h2>
         <button className="dashboard-action" disabled={loading} onClick={() => setRefresh((n) => n + 1)} type="button">{loading ? 'Loading…' : 'Refresh'}</button>
       </div>
-      <p style={{ padding: '0 24px' }}>Private conversation data. Showing the latest 25 retained requests. Select a request to inspect retrieval scores, context, usage, latency, and errors.</p>
-      {error && <p role="alert" style={{ padding: '0 24px' }}>{error}</p>}
+      <p className="dashboard-section-note">Private conversation data. Showing the latest 25 retained requests. Select a request to inspect retrieval scores, context, usage, latency, and errors.</p>
+      {error && <p className="dashboard-section-note" role="alert">{error}</p>}
       <div className="dashboard-table-scroll" aria-busy={loading}>
         <table className="dashboard-table">
           <thead><tr><th scope="col">Query</th><th scope="col">Source</th><th scope="col">Model</th><th scope="col">Time</th></tr></thead>
@@ -65,7 +65,7 @@ export default function TracePanel({ businessId, adminToken, onUnauthorized }) {
         </table>
       </div>
       {!loading && !traces.length && <p className="dashboard-empty">No retained traces yet.</p>}
-      {detailId && <div style={{ padding: 24 }}>
+      {detailId && <div className="dashboard-trace-detail">
         <h3>Trace details</h3>
         <button className="dashboard-action" type="button" onClick={() => { setDetailId(null); setSelected(null); }}>Close details</button>
         <pre tabIndex={0} aria-label="Trace JSON" style={{ maxHeight: 480, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{selected ? JSON.stringify(selected, null, 2) : 'Loading details…'}</pre>

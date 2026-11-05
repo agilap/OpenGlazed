@@ -296,7 +296,7 @@ export default function Dashboard() {
       <main className="dashboard-main">
         <header className="dashboard-header" id="overview">
           <div>
-            <h1>{businessName}</h1>
+            <span className="dashboard-kicker">WORKSPACE / OVERVIEW</span><h1>{businessName}</h1>
             <p>{data.business.url}</p>
           </div>
           <div className="dashboard-actions">
