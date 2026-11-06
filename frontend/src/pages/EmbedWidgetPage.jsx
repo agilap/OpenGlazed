@@ -18,6 +18,9 @@ export default function EmbedWidgetPage() {
     return () => controller.abort();
   }, [id]);
   useEffect(() => {
+    if (business?.accent_color && window.parent !== window) window.parent.postMessage({ type: 'GLAZED_THEME', color: business.accent_color }, '*');
+  }, [business]);
+  useEffect(() => {
     function close(event) {
       if (event.key === 'Escape' && window.parent !== window) window.parent.postMessage({ type: 'GLAZED_CLOSE' }, '*');
     }

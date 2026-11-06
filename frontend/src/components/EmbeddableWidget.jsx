@@ -387,7 +387,7 @@ export default function EmbeddableWidget({ businessId, config = {} }) {
         .gzd-widget-root[data-theme='dark'] :is(.gzd-time,.gzd-powered,.gzd-gate p,.gzd-gate label,.gzd-citations) { color: #d4d4d8; }
         .gzd-widget-root[data-theme='dark'] .gzd-citation-src { color: #a5b4fc; }
         .gzd-retry { margin: 0 16px 12px; min-height: 44px; }
-        .gzd-status { padding: 0 20px 8px; font-size: 12px; }
+        .gzd-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
         @media (max-width: 400px) { .gzd-messages { padding: 16px; } .gzd-widget-root input { font-size: 16px; } }
         @keyframes gzd-blink { 50% { opacity: 0; } }
         @keyframes gzd-typing-dots { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-4px); } }
