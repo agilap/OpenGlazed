@@ -9,28 +9,13 @@ const csv = require('./csv');
 const pdf = require('./pdf');
 const docx = require('./docx');
 const json = require('./json');
-const sitemap = require('./sitemap');
 
-const PARSERS = { markdown, paste, csv, pdf, docx, json, sitemap };
+const PARSERS = { markdown, paste, csv, pdf, docx, json };
 const SUPPORTED = Object.keys(PARSERS);
 
 async function ingestSource(businessId, sourceType, payload = {}) {
   const parser = PARSERS[sourceType];
   if (!parser) throw new Error(`Unsupported sourceType: ${sourceType}`);
-
-  if (sourceType === 'sitemap') {
-    const urls = await sitemap.parse(payload.text || payload.url);
-    let total = 0;
-    for (const u of urls) {
-      const r = await ingestNormalized([{ heading: u, content: '', url: u }], {
-        businessId,
-        sourceType: 'url',
-        sourceRef: u,
-      });
-      total += r.chunks;
-    }
-    return { chunks: total, sources: urls.length };
-  }
 
   const sections = await parser.parse(payload);
   return ingestNormalized(sections, {

@@ -8,7 +8,7 @@ One agent, two surfaces: a shareable **chat widget** and an internal **team chat
 
 A **hybrid retrieval pipeline** (dense + lexical + RAPTOR + rerank) — not a single vector lookup — grounds answers in your content, and every answer surfaces its citations so you can verify it.
 
-- URL scraper (Cheerio) → bounded semantic chunking → local Postgres + pgvector
+- Document upload (PDF, DOCX, Markdown, TXT, CSV, JSON) → bounded semantic chunking → local Postgres + pgvector
 - Embeddable chat widget (React + iframe) that shows the sources it used
 - **Hybrid retrieval**: dense (pgvector) + lexical (Postgres FTS / `ts_rank_cd`) fused with Reciprocal Rank Fusion (RRF=60), optional overview summaries, and bounded context. No extra services; legacy cosine reranking is opt-in
 - **Tool-calling agent**: the model decides when to search the knowledge base, capture a lead, or escalate to a human (falls back to plain RAG on providers without tool calling)
@@ -28,7 +28,7 @@ A **hybrid retrieval pipeline** (dense + lexical + RAPTOR + rerank) — not a si
 
 ## Project structure
 
-- `backend/` Express API, scraping pipeline, chunk store, chat APIs
+- `backend/` Express API, document ingestion pipeline, chunk store, chat APIs
 - `backend/src/services/embeddings.js` OpenAI embedding helper
 - `docker-compose.yml` + `db/init.sql` — local Postgres + pgvector, auto-creates the schema
 - `frontend/` React SPA (onboarding + dashboard)
@@ -147,7 +147,7 @@ When the backend runs in Docker, `localhost` means the container itself. Point `
 
 - `backend/src/db.js` node-postgres (pg) client + query helpers
 - `backend/src/server.js` API routes + widget hosting
-- `backend/src/ingest.js` scrape/chunk storage pipeline
+- `backend/src/ingest.js` chunk/embed/storage pipeline
 - `backend/src/services/agent.js` tool-calling agent loop (widget + team surfaces)
 - `backend/src/services/retriever.js` BlendedRAG retrieval (dense + BM25 + RAPTOR + rerank)
 - `backend/public/widget.js` embeddable widget script

@@ -13,7 +13,7 @@ const { notifyUnanswered } = require('./services/notify');
 const db            = require('./db');
 const auth = require('./auth');
 const traces = require('./services/traces');
-const { runIngest, ingestNormalized, reembedMissing } = require('./ingest');
+const { reembedMissing } = require('./ingest');
 const { embedTexts } = require('./services/llm');
 const { ingestDocument, removeDocument, documentTypeFor, BINARY_TYPES } = require('./sources');
 
@@ -112,15 +112,14 @@ app.post('/api/auth/logout', asyncRoute(async function (req, res) { await auth.l
 
 app.post('/api/businesses', requireAdmin, asyncRoute(async function (req, res) {
   var name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
-  var url  = typeof req.body.url === 'string' ? req.body.url.trim() : '';
 
   if (!name || name.length > 120) {
     return res.status(400).json({ error: 'A workspace name of up to 120 characters is required' });
   }
 
   var business = req.user
-    ? (await db.query('INSERT INTO businesses (name, url, owner_id) VALUES ($1, $2, $3) RETURNING *', [name, url, req.user.id])).rows[0]
-    : await db.insertBusiness(name, url);
+    ? (await db.query('INSERT INTO businesses (name, owner_id) VALUES ($1, $2) RETURNING *', [name, req.user.id])).rows[0]
+    : await db.insertBusiness(name, null);
 
   if (!business) {
     return res.status(500).json({ error: 'failed to create business' });
@@ -128,13 +127,9 @@ app.post('/api/businesses', requireAdmin, asyncRoute(async function (req, res) {
 
   res.json({
     businessId: business.id,
-    status: 'ingesting',
+    status: 'pending',
     embedScript: '<script src="' + req.protocol + '://' + req.get('host') + '/widget.js" data-business-id="' + business.id + '"></script>',
     embedIframe: '<iframe src="' + embedOrigin + '/embed/' + business.id + '" width="360" height="560" style="border:0;position:fixed;right:20px;bottom:20px;z-index:999999;border-radius:12px;" title="' + name + ' assistant"></iframe>',
-  });
-
-  if (url) runIngest(business.id, url).catch(function (err) {
-    console.error('Background ingest failed for business', business.id, err.message);
   });
 }));
 
@@ -237,18 +232,6 @@ app.get('/api/businesses/:id/dashboard', requireAdmin, asyncRoute(async function
   if (!business) return res.status(404).json({ error: 'business not found' });
 
   return res.json({ business: business });
-}));
-
-app.post('/api/ingest/:businessId', requireAdmin, asyncRoute(async function (req, res) {
-  var businessId = req.params.businessId;
-  var business = await db.getBusinessUrl(businessId);
-  if (!business) return res.status(404).json({ error: 'Business not found' });
-  if (!business.url) return res.status(400).json({ error: 'This workspace has no website to re-index' });
-
-  res.json({ status: 'started', message: 'Ingest triggered' });
-  runIngest(businessId, business.url).catch(function (err) {
-    console.error('Re-ingest failed for business', businessId, err.message);
-  });
 }));
 
 app.get('/api/ingest/:businessId/status', asyncRoute(async function (req, res) {

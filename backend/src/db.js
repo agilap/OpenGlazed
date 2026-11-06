@@ -291,11 +291,6 @@ async function getBusinessById(businessId) {
   return rows[0] || null;
 }
 
-async function getBusinessUrl(businessId) {
-  const { rows } = await pool.query('SELECT url FROM businesses WHERE id = $1', [businessId]);
-  return rows[0] || null;
-}
-
 async function getBusinessProfileCols(businessId, cols) {
   const { rows } = await pool.query(`SELECT ${cols.join(', ')} FROM businesses WHERE id = $1`, [businessId]);
   return rows[0] || null;
@@ -461,7 +456,6 @@ module.exports = {
   getDashboardStats,
   insertBusiness,
   getBusinessById,
-  getBusinessUrl,
   getBusinessProfileCols,
   updateBusiness,
   getBusinessStatusCols,

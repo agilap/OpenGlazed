@@ -42,7 +42,6 @@ test('a failed query returns 500 and the server stays up', async (t) => {
     ['GET', '/api/ingest/1/status', {}],
     ['GET', '/api/businesses/1', {}],
     ['GET', '/api/businesses/1/dashboard', auth],
-    ['POST', '/api/ingest/1', auth],
     ['POST', '/api/sources/1', auth],
     ['GET', '/api/dashboard/1/traces', auth],
     ['GET', '/api/dashboard/1/traces/00000000-0000-4000-8000-000000000001', auth],

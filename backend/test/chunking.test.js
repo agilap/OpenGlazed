@@ -2,7 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { buildSemanticChunks, extractCleanPageText } = require('../src/ingest');
+const { buildSemanticChunks } = require('../src/ingest');
 
 const make = (content, extra = {}) => ({ content, url: 'https://example.test/faq', ...extra });
 
@@ -37,21 +37,6 @@ test('dedupe preserves distinct source provenance and near-identical numeric fac
     make(repeated + ' Costs $10.'), make(repeated + ' Costs $20.'), make(repeated),
   ], 7);
   assert.equal(chunks.length, 4);
-});
-
-test('HTML extraction keeps short facts and paragraph boundaries', () => {
-  const content = extractCleanPageText('<main><h2>Returns</h2><p>Refunds: 30 days.</p><p>Shipping: $5.</p></main>');
-  assert.match(content, /Returns\n\nRefunds: 30 days\.\n\nShipping: \$5\./);
-});
-
-
-test('section scraper preserves short FAQs and separates block text', () => {
-  const cheerio = require('cheerio');
-  const { extractSections } = require('../src/services/scraper');
-  const sections = extractSections(cheerio.load('<main><h2>Returns</h2><p>Refunds: 30 days.</p><p>Shipping: $5.</p></main>'), 'https://example.test');
-  assert.equal(sections.length, 1);
-  assert.equal(sections[0].heading, 'Returns');
-  assert.equal(sections[0].content, 'Refunds: 30 days.\n\nShipping: $5.');
 });
 
 test('long single tokens terminate and each chunk respects the estimate', () => {
