@@ -9,7 +9,7 @@ const crypto  = require('node:crypto');
 const { evaluateAnswer } = require('./services/generator');
 const { runAgent }  = require('./services/agent');
 const { classifyExchange } = require('./services/guard');
-const { notifyUnanswered } = require('./services/notify');
+const { notifyUnanswered, sendMail, mailConfigured, appUrl } = require('./services/notify');
 const db            = require('./db');
 const auth = require('./auth');
 const traces = require('./services/traces');
@@ -23,17 +23,32 @@ const port = process.env.PORT || 3000;
 const allowedOrigin = process.env.FRONTEND_ORIGIN       || 'http://localhost:5173';
 const embedOrigin   = process.env.FRONTEND_EMBED_ORIGIN || allowedOrigin;
 
-let ADMIN_TOKEN = process.env.ADMIN_TOKEN;
-if (!ADMIN_TOKEN) {
-  ADMIN_TOKEN = require('crypto').randomBytes(24).toString('hex');
-  console.log('[auth] ADMIN_TOKEN not set — generated ephemeral token: ' + ADMIN_TOKEN);
+const sha256 = (value) => crypto.createHash('sha256').update(value).digest();
+const ADMIN_DIGEST = process.env.ADMIN_TOKEN ? sha256(process.env.ADMIN_TOKEN) : null;
+if (!ADMIN_DIGEST) console.log('[auth] ADMIN_TOKEN not set — admin token access is disabled; sign in with an account.');
+function isAdminToken(token) {
+  // Hash both sides so timingSafeEqual gets equal-length buffers and leaks no length.
+  return Boolean(ADMIN_DIGEST && token) && crypto.timingSafeEqual(sha256(token), ADMIN_DIGEST);
 }
+
+// shortcut: in-memory fixed-window counters, per process and reset on restart; move to Postgres/Redis before running more than one instance.
+const rateWindows = new Map();
+function hit(key, max, windowMs) {
+  const now = Date.now();
+  let entry = rateWindows.get(key);
+  if (!entry || now - entry.start >= windowMs) rateWindows.set(key, entry = { start: now, count: 0, windowMs });
+  return ++entry.count <= max;
+}
+setInterval(function () {
+  const now = Date.now();
+  for (const [key, entry] of rateWindows) if (now - entry.start >= entry.windowMs) rateWindows.delete(key);
+}, 60 * 1000).unref();
 
 async function requireAdmin(req, res, next) {
   try {
     const header = req.headers.authorization || '';
     const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-    if (token && token === ADMIN_TOKEN) return next();
+    if (isAdminToken(token)) return next();
     const user = await auth.getUser(req);
     if (!user) return res.status(401).json({ error: 'Sign in required' });
     const businessId = req.params.businessId || req.params.id;
@@ -53,12 +68,33 @@ function asyncRoute(handler) {
   };
 }
 
+// TRUST_PROXY: hop count (e.g. 1) or an Express preset such as "loopback", so req.ip is the visitor, not the proxy.
+if (process.env.TRUST_PROXY) app.set('trust proxy', /^\d+$/.test(process.env.TRUST_PROXY) ? Number(process.env.TRUST_PROXY) : process.env.TRUST_PROXY);
+app.disable('x-powered-by');
+app.use(function (req, res, next) {
+  res.set({ 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'strict-origin-when-cross-origin', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'" });
+  next();
+});
 app.use(cors({ origin: allowedOrigin, credentials: true }));
 app.use(function (req, res, next) {
   if ((req.path.startsWith('/api/auth/') || (req.headers.cookie || '').includes('og_session=')) && !['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.headers.origin && req.headers.origin !== allowedOrigin && req.headers.origin !== req.protocol + '://' + req.get('host')) return res.status(403).json({ error: 'Invalid origin' });
   next();
 });
-app.use(express.json({ limit: '25mb' }));
+app.param('businessId', function (req, res, next, value) {
+  if (!validBusinessId(value)) return res.status(400).json({ error: 'Invalid businessId' });
+  next();
+});
+app.param('id', function (req, res, next, value) {
+  if (!validBusinessId(value)) return res.status(404).json({ error: 'Business not found' });
+  next();
+});
+
+const smallJson = express.json({ limit: '100kb' });
+const uploadJson = express.json({ limit: '25mb' });
+const UPLOAD_PATH = /^\/api\/(sources\/[^/]+|v1\/documents)\/?$/;
+app.use(function (req, res, next) {
+  return (req.method === 'POST' && UPLOAD_PATH.test(req.path) ? uploadJson : smallJson)(req, res, next);
+});
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 app.use(function (req, res, next) {
@@ -69,32 +105,60 @@ app.use(function (req, res, next) {
   next();
 });
 
-const authAttempts = new Map();
 function limitAuth(req, res, next) {
-  const now = Date.now();
-  const key = req.ip;
-  const recent = (authAttempts.get(key) || []).filter((time) => now - time < 15 * 60 * 1000);
-  if (recent.length >= 20) return res.status(429).json({ error: 'Too many attempts. Try again later.' });
-  recent.push(now); authAttempts.set(key, recent); next();
+  if (!hit('auth:' + req.ip, 20, 15 * 60 * 1000)) return res.status(429).json({ error: 'Too many attempts. Try again later.' });
+  next();
 }
+const CHAT_PER_MINUTE = Number(process.env.CHAT_RATE_PER_MINUTE) || 20;
+const CHAT_PER_DAY = Number(process.env.CHAT_DAILY_LIMIT) || 2000;
+function limitChat(req, res, next) {
+  const id = req.params.businessId;
+  if (!hit('chat:' + id + ':' + req.ip, CHAT_PER_MINUTE, 60 * 1000)) return res.status(429).json({ error: 'Too many messages. Wait a minute and try again.' });
+  if (!hit('chat-day:' + id, CHAT_PER_DAY, 24 * 60 * 60 * 1000)) return res.status(429).json({ error: 'This assistant has reached its daily message limit.' });
+  next();
+}
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 function credentials(body) {
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
   const password = typeof body.password === 'string' ? body.password : '';
-  return { email, password, valid: email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && password.length >= 12 && password.length <= 1024 };
+  return { email, password, valid: email.length <= 254 && EMAIL.test(email) && validPassword(password) };
+}
+const validPassword = (password) => typeof password === 'string' && password.length >= 12 && password.length <= 1024;
+const publicUser = (user) => ({ id: user.id, email: user.email, email_verified: user.email_verified });
+
+async function sendVerification(user) {
+  const token = await auth.issueToken(user.id, 'verify', '24 hours');
+  await sendMail({ to: user.email, subject: 'Confirm your Glazed AI email', text: `Confirm your email address:\n\n${appUrl()}/verify#${token}\n\nThe link expires in 24 hours. If you did not create an account, ignore this email.` });
+}
+async function requireUser(req, res, next) {
+  try {
+    const user = await auth.getUser(req);
+    if (!user) return res.status(401).json({ error: 'Sign in required' });
+    req.user = user;
+    next();
+  } catch (err) { next(err); }
+}
+async function checkPassword(user, password) {
+  const row = await db.query('SELECT password_hash FROM users WHERE id = $1', [user.id]);
+  return typeof password === 'string' && password.length <= 1024 && row.rowCount > 0 && auth.verifyPassword(password, row.rows[0].password_hash);
 }
 app.post('/api/auth/signup', limitAuth, asyncRoute(async function (req, res) {
   const { email, password, valid } = credentials(req.body || {});
   if (!valid) return res.status(400).json({ error: 'Enter a valid email and a password of at least 12 characters.' });
   await auth.ensureAuthSchema();
   const hash = await auth.hashPassword(password);
-  const result = await db.query('INSERT INTO users (email, password_hash) VALUES ($1, $2) ON CONFLICT (email) DO NOTHING RETURNING id, email', [email, hash]);
+  // Without SMTP there is no way to send a link, so the account starts verified.
+  const result = await db.query('INSERT INTO users (email, password_hash, email_verified_at) VALUES ($1, $2, CASE WHEN $3 THEN NULL ELSE now() END) ON CONFLICT (email) DO NOTHING RETURNING id, email, email_verified_at IS NOT NULL AS email_verified', [email, hash, mailConfigured()]);
   if (!result.rowCount) return res.status(409).json({ error: 'An account with this email already exists.' });
-  await auth.createSession(res, result.rows[0].id);
-  res.status(201).json({ user: result.rows[0] });
+  const user = result.rows[0];
+  await auth.createSession(res, user.id);
+  if (!user.email_verified) sendVerification(user).catch((err) => console.error(JSON.stringify({ event: 'auth.verify_mail_failed', error: err.message })));
+  res.status(201).json({ user: publicUser(user) });
 }));
 app.post('/api/auth/login', limitAuth, asyncRoute(async function (req, res) {
   const { email, password } = credentials(req.body || {});
   if (email.length > 254 || password.length > 1024) return res.status(401).json({ error: 'Invalid email or password.' });
+  if (!hit('login:' + email, 10, 15 * 60 * 1000)) return res.status(429).json({ error: 'Too many attempts. Try again later.' });
   await auth.ensureAuthSchema();
   const result = await db.query('SELECT id, email, password_hash FROM users WHERE email = $1', [email]);
   const user = result.rows[0];
@@ -106,9 +170,85 @@ app.get('/api/auth/me', asyncRoute(async function (req, res) {
   const user = await auth.getUser(req);
   if (!user) return res.status(401).json({ error: 'Sign in required' });
   const businesses = await db.query("SELECT b.id, b.name, b.url, b.ingest_status, (SELECT count(*)::int FROM documents d WHERE d.business_id = b.id AND d.status = 'ready') AS document_count, (SELECT count(*)::int FROM inbox_items i WHERE i.business_id = b.id AND i.status = 'unanswered' AND i.resolved_at IS NULL) AS open_unanswered FROM businesses b WHERE b.owner_id = $1 ORDER BY b.id DESC", [user.id]);
-  res.set('Cache-Control', 'no-store').json({ user, businesses: businesses.rows });
+  res.set('Cache-Control', 'no-store').json({ user: publicUser(user), businesses: businesses.rows });
 }));
 app.post('/api/auth/logout', asyncRoute(async function (req, res) { await auth.logout(req, res); res.status(204).end(); }));
+app.post('/api/auth/logout-all', requireUser, asyncRoute(async function (req, res) {
+  await db.query('DELETE FROM user_sessions WHERE user_id = $1', [req.user.id]);
+  auth.setCookie(res, '', 0);
+  res.status(204).end();
+}));
+app.post('/api/auth/password', limitAuth, requireUser, asyncRoute(async function (req, res) {
+  const body = req.body || {};
+  if (!validPassword(body.password)) return res.status(400).json({ error: 'Use a new password of at least 12 characters.' });
+  if (!await checkPassword(req.user, body.current)) return res.status(403).json({ error: 'Your current password is incorrect.' });
+  await db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [await auth.hashPassword(body.password), req.user.id]);
+  // Keep this session, end every other one.
+  await db.query('DELETE FROM user_sessions WHERE user_id = $1 AND token_hash <> $2', [req.user.id, req.user.session_hash]);
+  await db.query("DELETE FROM auth_tokens WHERE user_id = $1 AND purpose = 'reset'", [req.user.id]);
+  res.status(204).end();
+}));
+app.delete('/api/auth/account', limitAuth, requireUser, asyncRoute(async function (req, res) {
+  const body = req.body || {};
+  if (body.confirm !== req.user.email) return res.status(400).json({ error: 'Type your email to confirm.' });
+  if (!await checkPassword(req.user, body.password)) return res.status(403).json({ error: 'Your password is incorrect.' });
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+    const owned = await client.query('DELETE FROM businesses WHERE owner_id = $1 RETURNING id', [req.user.id]);
+    await client.query('DELETE FROM users WHERE id = $1', [req.user.id]);
+    await client.query('COMMIT');
+    owned.rows.forEach((row) => db.clearBusinessCache(row.id));
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+  auth.setCookie(res, '', 0);
+  res.status(204).end();
+}));
+app.post('/api/auth/verify', limitAuth, asyncRoute(async function (req, res) {
+  const userId = await auth.consumeToken((req.body || {}).token, 'verify');
+  if (!userId) return res.status(400).json({ error: 'This link is invalid or has expired.' });
+  await db.query('UPDATE users SET email_verified_at = COALESCE(email_verified_at, now()) WHERE id = $1', [userId]);
+  res.status(204).end();
+}));
+app.post('/api/auth/verify/resend', requireUser, asyncRoute(async function (req, res) {
+  if (req.user.email_verified) return res.status(204).end();
+  if (!mailConfigured()) return res.status(503).json({ error: 'Email is not configured on this server.' });
+  if (!hit('verify:' + req.user.id, 3, 60 * 60 * 1000)) return res.status(429).json({ error: 'Too many emails. Try again later.' });
+  await sendVerification(req.user);
+  res.status(204).end();
+}));
+app.post('/api/auth/forgot', limitAuth, asyncRoute(async function (req, res) {
+  const email = typeof (req.body || {}).email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  if (!EMAIL.test(email) || email.length > 254) return res.status(400).json({ error: 'Enter a valid email.' });
+  if (!mailConfigured()) return res.status(503).json({ error: 'Password reset by email is not configured on this server.' });
+  // Same answer whether or not the account exists, so the form cannot be used to find accounts.
+  res.status(202).json({ status: 'sent' });
+  if (!hit('forgot:' + email, 3, 60 * 60 * 1000)) return;
+  try {
+    await auth.ensureAuthSchema();
+    const found = await db.query('SELECT id, email FROM users WHERE email = $1', [email]);
+    if (!found.rowCount) return;
+    const token = await auth.issueToken(found.rows[0].id, 'reset', '1 hour');
+    await sendMail({ to: email, subject: 'Reset your Glazed AI password', text: `Reset your password:\n\n${appUrl()}/reset#${token}\n\nThe link expires in 1 hour and works once. If you did not ask for this, ignore this email.` });
+  } catch (err) {
+    console.error(JSON.stringify({ event: 'auth.reset_mail_failed', error: err.message }));
+  }
+}));
+app.post('/api/auth/reset', limitAuth, asyncRoute(async function (req, res) {
+  const body = req.body || {};
+  if (!validPassword(body.password)) return res.status(400).json({ error: 'Use a password of at least 12 characters.' });
+  const userId = await auth.consumeToken(body.token, 'reset');
+  if (!userId) return res.status(400).json({ error: 'This link is invalid or has expired.' });
+  // Receiving the link proves the address, so a reset also verifies it.
+  await db.query('UPDATE users SET password_hash = $1, email_verified_at = COALESCE(email_verified_at, now()) WHERE id = $2', [await auth.hashPassword(body.password), userId]);
+  await db.query('DELETE FROM user_sessions WHERE user_id = $1', [userId]);
+  await auth.createSession(res, userId);
+  res.status(204).end();
+}));
 
 app.post('/api/businesses', requireAdmin, asyncRoute(async function (req, res) {
   var name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
@@ -117,9 +257,17 @@ app.post('/api/businesses', requireAdmin, asyncRoute(async function (req, res) {
     return res.status(400).json({ error: 'A workspace name of up to 120 characters is required' });
   }
 
-  var business = req.user
-    ? (await db.query('INSERT INTO businesses (name, owner_id) VALUES ($1, $2) RETURNING *', [name, req.user.id])).rows[0]
-    : await db.insertBusiness(name, null);
+  if (req.user && !req.user.email_verified) return res.status(403).json({ error: 'Confirm your email before creating a workspace.' });
+  var ownerId = req.user ? req.user.id : null;
+  if (!req.user && req.body.owner_email !== undefined) {
+    var owner = typeof req.body.owner_email === 'string' ? await db.query('SELECT id FROM users WHERE email = $1', [req.body.owner_email.trim().toLowerCase()]) : { rowCount: 0 };
+    if (!owner.rowCount) return res.status(400).json({ error: 'owner_email does not match an account' });
+    ownerId = owner.rows[0].id;
+  }
+  var business = ownerId
+    // url is NOT NULL from the scraper era; documents are the only source now.
+    ? (await db.query("INSERT INTO businesses (name, url, owner_id) VALUES ($1, '', $2) RETURNING *", [name, ownerId])).rows[0]
+    : await db.insertBusiness(name, '');
 
   if (!business) {
     return res.status(500).json({ error: 'failed to create business' });
@@ -234,7 +382,7 @@ app.get('/api/businesses/:id/dashboard', requireAdmin, asyncRoute(async function
   return res.json({ business: business });
 }));
 
-app.get('/api/ingest/:businessId/status', asyncRoute(async function (req, res) {
+app.get('/api/ingest/:businessId/status', requireAdmin, asyncRoute(async function (req, res) {
   var data = await db.getBusinessStatusCols(req.params.businessId);
 
   res.json({
@@ -405,55 +553,46 @@ function recordExchange(businessId, sessionId, surface, message, result, busines
   });
 }
 
-app.post('/api/chat/:businessId/stream', function (req, res) {
+app.post('/api/chat/:businessId/stream', limitChat, function (req, res) {
   return handleChatStream(req, res, 'widget');
 });
 
-app.get('/api/chat/:businessId/history', async function (req, res) {
-  if (!req.query.sessionId) return res.status(400).json({ error: 'sessionId is required' });
-  try {
-    res.json(await db.getHistory(req.params.businessId, String(req.query.sessionId), 'widget', 100));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+app.get('/api/chat/:businessId/history', asyncRoute(async function (req, res) {
+  if (typeof req.query.sessionId !== 'string' || !req.query.sessionId || req.query.sessionId.length > 100) return res.status(400).json({ error: 'sessionId is required' });
+  res.json(await db.getHistory(req.params.businessId, req.query.sessionId, 'widget', 100));
+}));
 
-app.post('/api/chat/:businessId/lead', async function (req, res) {
-  try {
-    await db.saveLead(req.params.businessId, req.body.sessionId, {
-      name:               req.body.name  || null,
-      email:              req.body.email || null,
-      phone:              req.body.phone || null,
-      intent:             'unknown',
-      sentiment:          'neutral',
-      follow_up_priority: 'medium',
-      key_question:       null,
-    });
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+app.post('/api/chat/:businessId/lead', asyncRoute(async function (req, res) {
+  if (!validBusinessId(req.params.businessId)) return res.status(404).json({ error: 'Business not found' });
+  if (!hit('lead:' + req.ip, 10, 60 * 1000)) return res.status(429).json({ error: 'Too many requests. Try again in a minute.' });
+  const body = req.body || {};
+  // undefined = invalid, null = not given
+  const field = (value, max) => value === undefined || value === null || value === '' ? null : typeof value === 'string' && value.trim().length <= max ? value.trim() || null : undefined;
+  const name = field(body.name, 120), email = field(body.email, 254), phone = field(body.phone, 40);
+  if (typeof body.sessionId !== 'string' || !body.sessionId || body.sessionId.length > 100) return res.status(400).json({ error: 'sessionId is required' });
+  if (name === undefined || email === undefined || phone === undefined || (email && !EMAIL.test(email)) || (!email && !phone)) return res.status(400).json({ error: 'Enter a valid email or phone number.' });
+  if (!await db.getBusinessById(req.params.businessId)) return res.status(404).json({ error: 'Business not found' });
+  await db.saveLead(req.params.businessId, body.sessionId, {
+    name, email, phone,
+    intent:             'unknown',
+    sentiment:          'neutral',
+    follow_up_priority: 'medium',
+    key_question:       null,
+  });
+  res.json({ success: true });
+}));
 
 app.post('/api/team/:businessId/stream', requireAdmin, function (req, res) {
   return handleChatStream(req, res, 'team');
 });
 
-app.get('/api/team/:businessId/threads', requireAdmin, async function (req, res) {
-  try {
-    res.json(await db.getSessions(req.params.businessId, { channel: 'team' }));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+app.get('/api/team/:businessId/threads', requireAdmin, asyncRoute(async function (req, res) {
+  res.json(await db.getSessions(req.params.businessId, { channel: 'team' }));
+}));
 
-app.get('/api/team/:businessId/threads/:threadId', requireAdmin, async function (req, res) {
-  try {
-    res.json(await db.getHistory(req.params.businessId, req.params.threadId, 'team', 200));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+app.get('/api/team/:businessId/threads/:threadId', requireAdmin, asyncRoute(async function (req, res) {
+  res.json(await db.getHistory(req.params.businessId, req.params.threadId, 'team', 200));
+}));
 
 function validTraceScope(req, res, next) {
   if (!validBusinessId(req.params.businessId)) return res.status(400).json({ error: 'Invalid businessId' });
@@ -479,48 +618,28 @@ app.get('/api/dashboard/:businessId/traces/:traceId', requireAdmin, validTraceSc
   res.json(trace);
 }));
 
-app.get('/api/dashboard/:businessId/stats', requireAdmin, async function (req, res) {
-  try {
-    res.json(await db.getDashboardStats(req.params.businessId));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+app.get('/api/dashboard/:businessId/stats', requireAdmin, asyncRoute(async function (req, res) {
+  res.json(await db.getDashboardStats(req.params.businessId));
+}));
 
-app.get('/api/dashboard/:businessId/transcripts', requireAdmin, async function (req, res) {
-  try {
-    res.json(await db.getTranscripts(req.params.businessId, req.query.sessionId || null));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+app.get('/api/dashboard/:businessId/transcripts', requireAdmin, asyncRoute(async function (req, res) {
+  res.json(await db.getTranscripts(req.params.businessId, req.query.sessionId || null));
+}));
 
-app.get('/api/dashboard/:businessId/sessions', requireAdmin, async function (req, res) {
-  try {
-    res.json(await db.getSessions(req.params.businessId));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+app.get('/api/dashboard/:businessId/sessions', requireAdmin, asyncRoute(async function (req, res) {
+  res.json(await db.getSessions(req.params.businessId));
+}));
 
-app.get('/api/dashboard/:businessId/leads', requireAdmin, async function (req, res) {
-  try {
-    res.json(await db.getLeads(req.params.businessId, {
-      limit:    Number(req.query.limit) || 100,
-      priority: req.query.priority      || null,
-    }));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+app.get('/api/dashboard/:businessId/leads', requireAdmin, asyncRoute(async function (req, res) {
+  res.json(await db.getLeads(req.params.businessId, {
+    limit:    Number(req.query.limit) || 100,
+    priority: req.query.priority      || null,
+  }));
+}));
 
-app.get('/api/dashboard/:businessId/questions', requireAdmin, async function (req, res) {
-  try {
-    res.json(await db.getTopQuestions(req.params.businessId, Number(req.query.days) || 7));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+app.get('/api/dashboard/:businessId/questions', requireAdmin, asyncRoute(async function (req, res) {
+  res.json(await db.getTopQuestions(req.params.businessId, Number(req.query.days) || 7));
+}));
 
 app.get('/api/keys/:businessId', requireAdmin, asyncRoute(async function (req, res) {
   res.set('Cache-Control', 'no-store').json({ keys: await db.listApiKeys(req.params.businessId) });
@@ -538,18 +657,13 @@ app.delete('/api/keys/:businessId/:keyId', requireAdmin, asyncRoute(async functi
   res.status(204).end();
 }));
 
-const apiCalls = new Map();
 async function requireApiKey(req, res, next) {
   try {
     var header = req.headers.authorization || '';
     var key = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
     var found = /^ogk_[A-Za-z0-9_-]{32}$/.test(key) ? await db.findApiKey(key) : null;
     if (!found) return res.status(401).json({ error: 'Invalid or revoked API key' });
-    var now = Date.now();
-    var recent = (apiCalls.get(found.id) || []).filter(function (time) { return now - time < 60 * 1000; });
-    if (recent.length >= 60) return res.status(429).json({ error: 'Rate limit is 60 requests per minute per key' });
-    recent.push(now);
-    apiCalls.set(found.id, recent);
+    if (!hit('key:' + found.id, 60, 60 * 1000)) return res.status(429).json({ error: 'Rate limit is 60 requests per minute per key' });
     req.businessId = Number(found.business_id);
     next();
   } catch (err) { next(err); }
@@ -668,6 +782,12 @@ function pruneTraces() {
 }
 pruneTraces();
 setInterval(pruneTraces, 60 * 60 * 1000).unref();
+
+function pruneAuth() {
+  auth.pruneExpired().catch((err) => console.error(JSON.stringify({ event: 'auth.prune_failed', message: err.message })));
+}
+pruneAuth();
+setInterval(pruneAuth, 60 * 60 * 1000).unref();
 
 app.listen(port, function () {
   console.log('glazed server running on http://localhost:' + port);

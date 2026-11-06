@@ -26,7 +26,7 @@ test('server preserves partial model output without appending a different answer
   const events = [];
   let ended = false;
   const res = { writeHead() {}, on() {}, write(frame) { events.push(JSON.parse(frame.slice(6))); }, end() { ended = true; } };
-  await route.stack[0].handle({ params: { businessId: '1' }, body: { message: 'question', sessionId: 's' } }, res);
+  await route.stack.at(-1).handle({ params: { businessId: '1' }, body: { message: 'question', sessionId: 's' } }, res);
   assert.equal(ended, true);
   assert.deepEqual(events.map((event) => event.token).filter(Boolean), ['Partial answer']);
   assert.equal(events.at(-1).source, 'error');

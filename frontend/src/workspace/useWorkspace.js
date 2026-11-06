@@ -10,27 +10,19 @@ export function useWorkspace(businessId) {
   const [documents, setDocumentState] = useState([]);
   const [status, setStatus] = useState('loading');
   const [error, setError] = useState(null);
-  const [adminToken, setAdminToken] = useState(() => localStorage.getItem('glazed_admin_token') || '');
-  const [needToken, setNeedToken] = useState(false);
+  const [needSignIn, setNeedSignIn] = useState(false);
   const [user, setUser] = useState(null);
   const [signedIn, setSignedIn] = useState(false);
   const [workspaces, setWorkspaces] = useState([]);
   const [inboxCounts, setInboxCounts] = useState({});
 
-  const saveToken = useCallback((token) => {
-    setAdminToken(token);
-    if (token) localStorage.setItem('glazed_admin_token', token);
-    else localStorage.removeItem('glazed_admin_token');
-  }, []);
   const authedFetch = useCallback(async (url, options = {}) => {
-    const headers = new Headers(options.headers || {});
-    if (adminToken) headers.set('Authorization', `Bearer ${adminToken}`);
-    const response = await fetch(url, { ...options, headers, credentials: 'include' });
-    if (response.status === 401) setNeedToken(true);
+    const response = await fetch(url, { ...options, credentials: 'include' });
+    if (response.status === 401) setNeedSignIn(true);
     return response;
-  }, [adminToken]);
-  const request = useCallback(async (path, authenticated = true) => {
-    const response = await (authenticated ? authedFetch(`${API_BASE}${path}`) : fetch(`${API_BASE}${path}`));
+  }, []);
+  const request = useCallback(async (path) => {
+    const response = await authedFetch(`${API_BASE}${path}`);
     const json = await response.json();
     if (!response.ok || json.error) throw new Error(json.error || 'Failed to load workspace');
     return json;
@@ -47,13 +39,13 @@ export function useWorkspace(businessId) {
   const reload = useCallback(async () => {
     if (!businessId) return;
     setError(null);
-    setNeedToken(false);
+    setNeedSignIn(false);
     setStatus('loading');
     try {
       const [dashboard, nextStats, sessions, nextLeads, sources, ingest] = await Promise.all([
         request(`/api/businesses/${businessId}/dashboard`), request(`/api/dashboard/${businessId}/stats`),
         request(`/api/dashboard/${businessId}/sessions`), request(`/api/dashboard/${businessId}/leads`),
-        request(`/api/sources/${businessId}`), request(`/api/ingest/${businessId}/status`, false),
+        request(`/api/sources/${businessId}`), request(`/api/ingest/${businessId}/status`),
       ]);
       setBusiness({ ...dashboard.business, ingest_status: ingest.status, ingest_progress: ingest.ingest_progress });
       setStats({ documents: nextStats.documents ?? null, questionsAnswered: nextStats.questionsAnswered ?? null, unansweredRate: nextStats.unansweredRate ?? null, medianLatencyMs: nextStats.medianLatencyMs ?? null, totalLeads: nextStats.totalLeads ?? null, offTopic: nextStats.offTopic ?? null });
@@ -76,10 +68,10 @@ export function useWorkspace(businessId) {
   useEffect(() => {
     if (!businessId) return undefined;
     const timer = setInterval(() => {
-      request(`/api/ingest/${businessId}/status`, false).then((ingest) => setBusiness((current) => current ? { ...current, ingest_status: ingest.status, ingest_progress: ingest.ingest_progress } : current)).catch(() => {});
+      request(`/api/ingest/${businessId}/status`).then((ingest) => setBusiness((current) => current ? { ...current, ingest_status: ingest.status, ingest_progress: ingest.ingest_progress } : current)).catch(() => {});
       refreshDocuments().catch(() => {});
     }, 5000);
     return () => clearInterval(timer);
   }, [businessId, request, refreshDocuments]);
-  return { business, stats, workspaces, inboxCounts, setInboxCounts, conversations, leads, documents, status, error, adminToken, saveToken, signedIn, user, needToken, setNeedToken, authedFetch, reload, refreshDocuments, setDocuments };
+  return { business, stats, workspaces, inboxCounts, setInboxCounts, conversations, leads, documents, status, error, signedIn, user, needSignIn, setNeedSignIn, authedFetch, reload, refreshDocuments, setDocuments };
 }

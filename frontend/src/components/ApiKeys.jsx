@@ -6,7 +6,7 @@ function formatDate(value) {
   return value ? new Date(value).toLocaleString() : 'never';
 }
 
-export default function ApiKeys({ businessId, adminToken, onUnauthorized }) {
+export default function ApiKeys({ businessId, onUnauthorized }) {
   const [keys, setKeys] = useState([]);
   const [name, setName] = useState('');
   const [created, setCreated] = useState(null);
@@ -17,7 +17,7 @@ export default function ApiKeys({ businessId, adminToken, onUnauthorized }) {
   const shownKey = created?.key || 'ogk_YOUR_KEY';
 
   async function request(path = '', options = {}) {
-    const headers = { ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}), ...(options.body ? { 'Content-Type': 'application/json' } : {}) };
+    const headers = options.body ? { 'Content-Type': 'application/json' } : {};
     const response = await fetch(`${API_BASE}/api/keys/${businessId}${path}`, { ...options, headers, credentials: 'include' });
     if (response.status === 401) onUnauthorized?.();
     const json = response.status === 204 ? {} : await response.json().catch(() => ({}));
@@ -33,7 +33,7 @@ export default function ApiKeys({ businessId, adminToken, onUnauthorized }) {
     }
   }
 
-  useEffect(() => { refresh(); }, [businessId, adminToken]);
+  useEffect(() => { refresh(); }, [businessId]);
 
   async function create(event) {
     event.preventDefault();

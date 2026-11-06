@@ -41,6 +41,24 @@ test('pdf parser reports a missing text layer', async () => {
   await assert.rejects(pdf.parse({ data: tinyPdf([]), filename: 'scan.pdf' }), /No text layer/);
 });
 
+test('pdf parsing runs in a worker and passes parser errors back', async () => {
+  const { parseInWorker } = require('../src/sources');
+  const sections = await parseInWorker('pdf', { data: tinyPdf(['Shipping is free over $50.']), filename: 'ship.pdf' });
+  assert.match(sections[0].content, /Shipping is free over \$50/);
+  await assert.rejects(parseInWorker('pdf', { data: tinyPdf([]), filename: 'scan.pdf' }), /No text layer/);
+});
+
+test('docx zip bombs are rejected from the central directory before inflating', async () => {
+  const { parseInWorker, zipUncompressedSize } = require('../src/sources');
+  const name = Buffer.from('word/document.xml');
+  const entry = Buffer.alloc(46); entry.writeUInt32LE(0x02014b50, 0); entry.writeUInt32LE(0xffffffff, 24); entry.writeUInt16LE(name.length, 28);
+  const eocd = Buffer.alloc(22); eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(1, 10); eocd.writeUInt32LE(4, 16);
+  const bomb = Buffer.concat([Buffer.from('PK\x03\x04', 'latin1'), entry, name, eocd]);
+  assert.equal(zipUncompressedSize(bomb), 0xffffffff);
+  await assert.rejects(parseInWorker('docx', { data: bomb, filename: 'bomb.docx' }), /expands to more than 200 MB/);
+  assert.throws(() => zipUncompressedSize(Buffer.from('PK not a zip')), /valid DOCX/);
+});
+
 test('json parser splits arrays and rejects invalid JSON', () => {
   const json = require('../src/sources/json');
   const sections = json.parse({ text: '[{"q":"a"},{"q":"b"}]', filename: 'faq.json' });

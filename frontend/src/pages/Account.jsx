@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import AccountSettings from '../components/AccountSettings';
 import '../styles/account.css';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
@@ -30,7 +31,6 @@ export default function Account({ mode }) {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to continue.');
-      localStorage.removeItem('glazed_admin_token');
       navigate('/account');
     } catch (err) { setError(err.message); } finally { setLoading(false); }
   }
@@ -62,7 +62,7 @@ export default function Account({ mode }) {
             <input id="account-email" type="email" autoComplete="email" placeholder="you@company.com" value={email} onChange={(e) => setEmail(e.target.value)} required />
             <label htmlFor="account-password">Password</label>
             <input id="account-password" type="password" autoComplete={signup ? 'new-password' : 'current-password'} minLength={signup ? 12 : undefined} maxLength={1024} value={password} onChange={(e) => setPassword(e.target.value)} aria-invalid={!!error} aria-describedby={[signup && 'account-password-hint', error && 'account-auth-error'].filter(Boolean).join(' ') || undefined} required />
-            {signup && <small id="account-password-hint">Use at least 12 characters.</small>}
+            {signup ? <small id="account-password-hint">Use at least 12 characters.</small> : <small><Link to="/forgot">Forgot password?</Link></small>}
             {error && <p id="account-auth-error" className="account-error" role="alert">{error}</p>}
             <button type="submit" disabled={loading}>{loading && <svg className="account-spinner" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true"><circle cx="12" cy="12" r="9" opacity=".3" /><path d="M12 3a9 9 0 0 1 9 9" /></svg>}{loading ? 'Please wait…' : signup ? 'Create account' : 'Sign in'}</button>
           </form>
@@ -79,6 +79,7 @@ export default function Account({ mode }) {
           <Link className="account-card account-card-new" to="/workspaces/new"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>New workspace</Link>
         </div>}
       </section>}
+      {!mode && account && <AccountSettings user={account.user} />}
     </div>
   </main>;
 }

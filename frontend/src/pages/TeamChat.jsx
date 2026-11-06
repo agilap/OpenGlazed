@@ -45,7 +45,7 @@ export default function TeamChat() {
     }
   }, [id, ws.authedFetch]);
 
-  useEffect(() => { loadThreads(); }, [loadThreads, ws.signedIn, ws.needToken]);
+  useEffect(() => { loadThreads(); }, [loadThreads, ws.signedIn, ws.needSignIn]);
   useEffect(() => {
     const node = messagesRef.current;
     if (node) node.scrollTop = node.scrollHeight;

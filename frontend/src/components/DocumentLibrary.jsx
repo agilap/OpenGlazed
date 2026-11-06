@@ -16,7 +16,7 @@ function readFile(file) {
   });
 }
 
-export default function DocumentLibrary({ businessId, adminToken, tone = 'light', onDocuments, onUnauthorized }) {
+export default function DocumentLibrary({ businessId, tone = 'light', onDocuments, onUnauthorized }) {
   const [documents, setDocuments] = useState([]);
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(0);
@@ -25,7 +25,7 @@ export default function DocumentLibrary({ businessId, adminToken, tone = 'light'
   const [pasted, setPasted] = useState('');
 
   async function request(path = '', options = {}) {
-    const headers = { ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}), ...(options.body ? { 'Content-Type': 'application/json' } : {}) };
+    const headers = options.body ? { 'Content-Type': 'application/json' } : {};
     const response = await fetch(`${API_BASE}/api/sources/${businessId}${path}`, { ...options, headers, credentials: 'include' });
     if (response.status === 401) onUnauthorized?.();
     const json = await response.json().catch(() => ({}));
@@ -43,14 +43,14 @@ export default function DocumentLibrary({ businessId, adminToken, tone = 'light'
     }
   }
 
-  useEffect(() => { refresh(); }, [businessId, adminToken]);
+  useEffect(() => { refresh(); }, [businessId]);
 
   const busy = uploading > 0 || documents.some((doc) => BUSY.includes(doc.status));
   useEffect(() => {
     if (!busy) return undefined;
     const timer = setInterval(refresh, 2000);
     return () => clearInterval(timer);
-  }, [busy, businessId, adminToken]);
+  }, [busy, businessId]);
 
   async function upload(items) {
     setError('');

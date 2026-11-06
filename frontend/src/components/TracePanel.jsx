@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 
-export default function TracePanel({ businessId, adminToken, onUnauthorized }) {
+export default function TracePanel({ businessId, onUnauthorized }) {
   const [traces, setTraces] = useState([]);
   const [selected, setSelected] = useState(null);
   const [error, setError] = useState('');
@@ -18,24 +18,24 @@ export default function TracePanel({ businessId, adminToken, onUnauthorized }) {
     setDetailId(null);
     setTraces([]);
     fetch(`${API_BASE}/api/dashboard/${businessId}/traces?limit=25`, {
-      headers: adminToken ? { Authorization: `Bearer ${adminToken}` } : {}, credentials: 'include', signal: controller.signal,
+      credentials: 'include', signal: controller.signal,
     }).then(async (response) => {
       if (response.status === 401) onUnauthorized();
-      if (!response.ok) throw new Error('Could not load traces. Check your admin token and retry.');
+      if (!response.ok) throw new Error('Could not load traces. Sign in and retry.');
       const rows = await response.json();
       if (!controller.signal.aborted) setTraces(Array.isArray(rows) ? rows : []);
     }).catch((err) => {
       if (!controller.signal.aborted) setError(err.message);
     }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [businessId, adminToken, refresh]);
+  }, [businessId, refresh]);
 
   useEffect(() => {
     if (!detailId) return;
     const controller = new AbortController();
     setSelected(null);
     fetch(`${API_BASE}/api/dashboard/${businessId}/traces/${encodeURIComponent(detailId)}`, {
-      headers: adminToken ? { Authorization: `Bearer ${adminToken}` } : {}, credentials: 'include', signal: controller.signal,
+      credentials: 'include', signal: controller.signal,
     }).then(async (response) => {
       if (response.status === 401) onUnauthorized();
       if (!response.ok) throw new Error('Could not load trace details.');
@@ -43,7 +43,7 @@ export default function TracePanel({ businessId, adminToken, onUnauthorized }) {
       if (!controller.signal.aborted) setSelected(detail);
     }).catch((err) => { if (!controller.signal.aborted) setError(err.message); });
     return () => controller.abort();
-  }, [detailId, businessId, adminToken]);
+  }, [detailId, businessId]);
 
   return (
     <section className="dashboard-table-card" id="traces" aria-labelledby="traces-heading">

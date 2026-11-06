@@ -5,11 +5,12 @@ import EmbedWidgetPage from './pages/EmbedWidgetPage';
 import TeamChat from './pages/TeamChat';
 import Account from './pages/Account';
 import NewWorkspace from './pages/NewWorkspace';
+import AccountRecovery from './pages/AccountRecovery';
 
 function DashboardRedirect() {
   const { id } = useParams();
   return <Navigate to={`/dashboard/${id}/overview`} replace />;
 }
 export default function App() {
-  return <div className="app-shell"><Routes><Route path="/workspaces/new" element={<NewWorkspace />} /><Route path="/account" element={<Account />} /><Route path="/login" element={<Account mode="login" />} /><Route path="/signup" element={<Account mode="signup" />} /><Route path="/" element={<Onboarding />} /><Route path="/dashboard/:id" element={<DashboardRedirect />} /><Route path="/dashboard/:id/:view" element={<Dashboard />} /><Route path="/embed/:id" element={<EmbedWidgetPage />} /><Route path="/team/:id" element={<TeamChat />} /></Routes></div>;
+  return <div className="app-shell"><Routes><Route path="/workspaces/new" element={<NewWorkspace />} /><Route path="/account" element={<Account />} /><Route path="/login" element={<Account mode="login" />} /><Route path="/signup" element={<Account mode="signup" />} /><Route path="/forgot" element={<AccountRecovery mode="forgot" />} /><Route path="/reset" element={<AccountRecovery mode="reset" />} /><Route path="/verify" element={<AccountRecovery mode="verify" />} /><Route path="/" element={<Onboarding />} /><Route path="/dashboard/:id" element={<DashboardRedirect />} /><Route path="/dashboard/:id/:view" element={<Dashboard />} /><Route path="/embed/:id" element={<EmbedWidgetPage />} /><Route path="/team/:id" element={<TeamChat />} /></Routes></div>;
 }

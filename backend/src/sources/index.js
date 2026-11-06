@@ -1,5 +1,7 @@
 'use strict';
 
+const path = require('node:path');
+const { Worker } = require('node:worker_threads');
 const { ingestNormalized, rebuildSummaries } = require('../ingest');
 const db = require('../db');
 
@@ -17,7 +19,7 @@ async function ingestSource(businessId, sourceType, payload = {}) {
   const parser = PARSERS[sourceType];
   if (!parser) throw new Error(`Unsupported sourceType: ${sourceType}`);
 
-  const sections = await parser.parse(payload);
+  const sections = BINARY_TYPES.has(sourceType) ? await parseInWorker(sourceType, payload) : await parser.parse(payload);
   return ingestNormalized(sections, {
     businessId,
     sourceType,
@@ -28,6 +30,43 @@ async function ingestSource(businessId, sourceType, payload = {}) {
 
 const FILE_TYPES = { pdf: 'pdf', docx: 'docx', md: 'markdown', markdown: 'markdown', txt: 'paste', csv: 'csv', json: 'json' };
 const BINARY_TYPES = new Set(['pdf', 'docx']);
+const PARSE_TIMEOUT_MS = Number(process.env.PARSE_TIMEOUT_MS) || 60 * 1000;
+const MAX_DOCX_UNCOMPRESSED = 200 * 1024 * 1024;
+
+// Sums the uncompressed sizes in the ZIP central directory, to reject zip bombs before inflating anything.
+function zipUncompressedSize(buf) {
+  const floor = Math.max(0, buf.length - 65557);
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= floor; i--) if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+  if (eocd < 0) throw new Error('This file does not look like a valid DOCX.');
+  let offset = buf.readUInt32LE(eocd + 16);
+  let total = 0;
+  for (let n = buf.readUInt16LE(eocd + 10); n > 0; n--) {
+    if (offset + 46 > buf.length || buf.readUInt32LE(offset) !== 0x02014b50) throw new Error('This file does not look like a valid DOCX.');
+    total += buf.readUInt32LE(offset + 24);
+    offset += 46 + buf.readUInt16LE(offset + 28) + buf.readUInt16LE(offset + 30) + buf.readUInt16LE(offset + 32);
+  }
+  return total;
+}
+
+function parseInWorker(sourceType, { data, filename }) {
+  if (sourceType === 'docx' && zipUncompressedSize(data) > MAX_DOCX_UNCOMPRESSED) return Promise.reject(new Error('This Word document expands to more than 200 MB.'));
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(path.join(__dirname, 'parseWorker.js'), { workerData: { sourceType, data, filename }, resourceLimits: { maxOldGenerationSizeMb: 512 } });
+    let settled = false;
+    const finish = (error, sections) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      worker.terminate();
+      if (error) reject(error); else resolve(sections);
+    };
+    const timer = setTimeout(() => finish(new Error('This file took too long to read. Try a smaller file.')), PARSE_TIMEOUT_MS);
+    worker.once('message', (message) => finish(message.error ? new Error(message.error) : null, message.sections));
+    worker.once('error', (error) => finish(error.code === 'ERR_WORKER_OUT_OF_MEMORY' ? new Error('This file needs too much memory to read.') : error));
+    worker.once('exit', () => finish(new Error('The file reader stopped unexpectedly.')));
+  });
+}
 
 function documentTypeFor(filename) {
   const ext = String(filename || '').toLowerCase().split('.').pop();
@@ -83,4 +122,4 @@ function removeDocument(businessId, documentId) {
   });
 }
 
-module.exports = { ingestSource, ingestDocument, removeDocument, documentTypeFor, BINARY_TYPES, SUPPORTED, PARSERS };
+module.exports = { parseInWorker, zipUncompressedSize, ingestSource, ingestDocument, removeDocument, documentTypeFor, BINARY_TYPES, SUPPORTED, PARSERS };

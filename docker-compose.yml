@@ -29,7 +29,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql://glazed:glazed@db:5432/glazed}
       PORT: 3000
     ports:
-      - "3000:3000"
+      - "127.0.0.1:${APP_PORT:-3000}:3000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

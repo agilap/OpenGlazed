@@ -278,11 +278,17 @@ Pass the returned `sessionId` back to keep a conversation. `unanswered` is `true
 
 ## Accounts and local database
 
-Open `/signup` to create an account, then sign in at `/login`. Each account can access the businesses it creates from its workspace. Sessions are stored in PostgreSQL and expire after seven days. The existing `ADMIN_TOKEN` remains available for administrative and legacy access; businesses created with that token do not automatically belong to an account.
+Open `/signup` to create an account, then sign in at `/login`. Each account can access the businesses it creates from its workspace. Sessions are stored in PostgreSQL and expire after seven days. The optional `ADMIN_TOKEN` remains available for administrative access; when it is unset, token access is disabled. Businesses created with that token do not automatically belong to an account.
 
 The database is persisted in the `glazed_pgdata` Docker volume and is bound to localhost on port 55434 by default. Set `POSTGRES_PORT` when starting Compose to use a different host port, and update `DATABASE_URL` in `backend/.env` accordingly for a backend running outside Docker. Do not run database tests against data you need to retain: use a separate database initialized with `db/init.sql`.
 
-For HTTPS deployments, set `COOKIE_SECURE=true` and configure `FRONTEND_ORIGIN` to the exact frontend origin. Account recovery and email verification are not yet implemented.
+Session cookies are `Secure` whenever `NODE_ENV=production` (override with `COOKIE_SECURE`). Configure `FRONTEND_ORIGIN` to the exact frontend origin, and set `TRUST_PROXY` (for example `1`) behind a reverse proxy so rate limits see visitor IPs. 
+
+Account settings (`/account`) cover password change (signs out other devices), sign out everywhere, and account deletion (deletes every workspace the account owns). When `SMTP_HOST` is set, new accounts must confirm their email before creating workspaces, and `/forgot` emails a one-hour, single-use reset link. Links point at `APP_URL` and carry the token in the URL fragment. Without SMTP, accounts start confirmed and password reset is unavailable. Expired sessions and tokens are pruned hourly. With `ADMIN_TOKEN`, `POST /api/businesses` accepts `owner_email` to create a workspace for an existing account.
+
+### Security headers
+
+The API sends `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`. The Vite dev and preview servers send the frame headers on every page except `/embed/*`, which customer sites must be able to frame. When you host the built frontend elsewhere, send `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors 'none'` on every path except `/embed/*`.
 
 ## Inbox, guardrails, and notifications
 
