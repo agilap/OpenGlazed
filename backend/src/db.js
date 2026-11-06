@@ -184,9 +184,9 @@ async function getTopQuestions(businessId, days = 7) {
 async function getDashboardStats(businessId) {
   const [docs, convo, leads, latency, offTopic] = await Promise.all([
     pool.query("SELECT COUNT(*) FILTER (WHERE status = 'ready')::int AS c FROM documents WHERE business_id = $1", [businessId]),
-    pool.query(`SELECT COUNT(*) FILTER (WHERE role = 'assistant' AND (answer_status IS NULL OR answer_status NOT IN ('smalltalk', 'blocked', 'off_topic')))::int AS answered,
+    pool.query(`SELECT COUNT(*) FILTER (WHERE role = 'assistant' AND (answer_status IS NULL OR answer_status = 'answered'))::int AS answered,
                        COUNT(DISTINCT session_id)::int AS conversations,
-                       COUNT(DISTINCT session_id) FILTER (WHERE role = 'assistant' AND answer_status = 'unanswered')::int AS unanswered
+                       COUNT(*) FILTER (WHERE role = 'assistant' AND answer_status = 'unanswered')::int AS unanswered
                 FROM messages WHERE business_id = $1 AND channel IN ('widget', 'team', 'api') AND session_id IS NOT NULL`, [businessId]),
     pool.query('SELECT COUNT(*)::int AS c FROM leads WHERE business_id = $1', [businessId]),
     pool.query('SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms) AS p50 FROM request_traces WHERE business_id = $1', [businessId]),
@@ -198,7 +198,8 @@ async function getDashboardStats(businessId) {
     documents: docs.rows[0].c,
     questionsAnswered: answered,
     conversations,
-    unansweredRate: conversations > 0 ? unanswered / conversations : null,
+    // Share of on-topic questions the documents could not answer.
+    unansweredRate: answered + unanswered > 0 ? unanswered / (answered + unanswered) : null,
     medianLatencyMs: p50 === null ? null : Math.round(Number(p50)),
     totalLeads: leads.rows[0].c,
     offTopic: offTopic.rows[0].c,

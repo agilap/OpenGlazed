@@ -122,4 +122,17 @@ function removeDocument(businessId, documentId) {
   });
 }
 
-module.exports = { parseInWorker, zipUncompressedSize, ingestSource, ingestDocument, removeDocument, documentTypeFor, BINARY_TYPES, SUPPORTED, PARSERS };
+// Jobs live in memory, so a restart orphans them. Uploaded bytes are not stored, so interrupted ingests cannot be resumed.
+// shortcut: assumes one server process; with several, this would fail another instance's in-flight jobs.
+// businessId limits recovery to one workspace (tests run in parallel against one database).
+async function recoverInterrupted({ businessId = null } = {}) {
+  const failed = await db.query("UPDATE documents SET status = 'error', error = 'Interrupted by a server restart. Upload the file again.' WHERE status IN ('queued', 'processing') AND ($1::bigint IS NULL OR business_id = $1) RETURNING id, business_id", [businessId]);
+  for (const doc of failed.rows) await db.query('DELETE FROM chunks WHERE business_id = $1 AND source_ref = $2', [doc.business_id, 'doc:' + doc.id]);
+  await db.query("UPDATE businesses SET ingest_status = 'active' WHERE ingest_status = 'ingesting' AND ($1::bigint IS NULL OR id = $1)", [businessId]);
+  const deleting = await db.query("SELECT id, business_id FROM documents WHERE status = 'deleting' AND ($1::bigint IS NULL OR business_id = $1)", [businessId]);
+  for (const doc of deleting.rows) removeDocument(doc.business_id, doc.id).catch((error) => console.error('[sources] delete retry failed for', doc.business_id, doc.id, error.message));
+  for (const businessId of new Set(failed.rows.map((doc) => String(doc.business_id)))) scheduleSummaries(businessId);
+  return { failed: failed.rowCount, deleting: deleting.rowCount };
+}
+
+module.exports = { recoverInterrupted, parseInWorker, zipUncompressedSize, ingestSource, ingestDocument, removeDocument, documentTypeFor, BINARY_TYPES, SUPPORTED, PARSERS };

@@ -76,17 +76,20 @@ test('workspace settings, inbox, ownership and deletion', { skip: !process.env.A
     delete process.env.SMTP_HOST;
     await notifyUnanswered({ business: { id: businessA, name: 'Updated A', notify_email: 'team@example.test', notify_on_unanswered: true }, item });
     assert.equal((await db.query('SELECT notified_at FROM inbox_items WHERE id = $1', [item.id])).rows[0].notified_at, null);
+    const realCount = db.countChunksBySource;
+    db.countChunksBySource = async () => { throw new Error('forced ingest failure'); };
+    const failedAnswer = await call('POST', `/api/inbox/${businessA}/${item.id}/answer`, cookieA, { answer: 'Open 9 to 5.' });
+    db.countChunksBySource = realCount;
+    assert.equal(failedAnswer.status, 502);
+    assert.equal((await db.query('SELECT resolved_at FROM inbox_items WHERE id = $1', [item.id])).rows[0].resolved_at, null, 'a failed answer leaves the question open');
+    assert.equal((await db.query("SELECT 1 FROM documents WHERE business_id = $1 AND filename LIKE 'Answer:%'", [businessA])).rowCount, 0, 'the failed document is removed');
     const response = await call('POST', `/api/inbox/${businessA}/${item.id}/answer`, cookieA, { answer: 'Open 9 to 5.' });
-    assert.equal(response.status, 202);
+    assert.equal(response.status, 200);
     const answered = await response.json();
     assert.equal(answered.document.filename, 'Answer: What are your hours?');
     assert.equal(answered.document.source_type, 'paste');
+    assert.equal(answered.document.status, 'ready', 'resolved only after the answer is searchable');
     assert.ok(answered.item.resolved_at);
-    for (let i = 0; i < 100; i += 1) {
-      const doc = await db.getDocument(businessA, answered.document.id);
-      if (!doc || ['ready', 'error'].includes(doc.status)) break;
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
     assert.equal((await call('DELETE', `/api/businesses/${businessA}`, cookieA, { confirm: 'updated a' })).status, 400);
     assert.equal((await call('DELETE', `/api/businesses/${businessA}`, cookieA, {})).status, 400);
     assert.equal((await call('DELETE', `/api/businesses/${businessA}`, cookieA, { confirm: 'Updated A' })).status, 204);

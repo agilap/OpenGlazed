@@ -91,3 +91,12 @@
 .share-chat-bare { height: 100dvh; overflow: hidden; background: var(--gz-paper); }
 .share-chat-bare .gzd-widget-root { height: 100%; }
 .account-create { box-sizing: border-box; width: min(100%, 600px); margin: 0 auto; padding: 72px 24px; }.account-create h1 { font-size: 36px; margin: 0 0 12px; }.account-create > p { color: var(--gz-muted); }.account-create-form { display: grid; gap: 10px; margin-top: 32px; }.account-create-form label { font-size: 14px; font-weight: 600; }.account-create-form label span { color: var(--gz-muted); font-weight: 400; }.account-create-form input, .account-create-form textarea { width: 100%; min-width: 0; min-height: 44px; padding: 10px 12px; border: 1px solid var(--gz-line-strong); border-radius: 6px; background: var(--gz-paper); color: var(--gz-ink); font: inherit; box-sizing: border-box; }.account-create-form textarea { min-height: 120px; resize: vertical; }.account-create-form button { justify-self: start; margin-top: 12px; }.account-page textarea:focus-visible { outline: 2px solid var(--gz-accent-mid); outline-offset: 3px; }.account-unanswered { padding: 4px 8px; border-radius: 12px; background: var(--gz-wash); color: var(--gz-accent); font: 12px var(--gz-mono); }
+
+.account-settings { padding-top: 0; }
+.account-settings h1 { margin: 0 0 8px; font-size: clamp(28px, 3vw, 36px); font-weight: 500; letter-spacing: -.03em; }
+.account-settings .account-create-form { max-width: 600px; padding-top: 32px; margin-top: 32px; border-top: 1px solid var(--gz-line); }
+.account-settings .account-create-form h2 { margin: 0; font-size: 18px; font-weight: 600; }
+.account-settings .account-create-form p { margin: 0; color: var(--gz-muted); }
+.account-secondary.account-danger { border-color: #c0362c; color: #c0362c; }
+.account-secondary.account-danger:hover:not(:disabled) { background: #c0362c; color: #fff; }
+.account-secondary.account-danger:disabled { opacity: .5; cursor: not-allowed; }

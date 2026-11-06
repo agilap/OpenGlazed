@@ -63,7 +63,8 @@ export default function EmbeddableWidget({ businessId, config = {} }) {
     return new URLSearchParams(window.location.search).get('debug') === 'true';
   }, []);
 
-  const shouldShowGate = !leadCaptured && !gateSkipped;
+  // Ask for an email only after a question the documents could not answer.
+  const shouldShowGate = followUp && !leadCaptured && !gateSkipped;
 
   useEffect(() => {
     const key = `glazed_session_${businessId}`;

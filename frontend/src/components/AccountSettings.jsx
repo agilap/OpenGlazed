@@ -26,7 +26,7 @@ export default function AccountSettings({ user }) {
   const [deletePassword, setDeletePassword] = useState(''); const [confirm, setConfirm] = useState('');
   const [verify, runVerify] = useAction(); const [password, runPassword] = useAction(); const [everywhere, runEverywhere] = useAction(); const [removal, runRemoval] = useAction();
 
-  return <section className="account-create" aria-labelledby="settings-heading">
+  return <section className="account-workspace account-settings" aria-labelledby="settings-heading">
     <p className="account-eyebrow">ACCOUNT</p><h1 id="settings-heading">Account settings</h1>
     {!user.email_verified && <div className="account-create-form" role="region" aria-label="Email confirmation">
       <p>Confirm {user.email} to create workspaces. Check your inbox for the link.</p>
@@ -50,7 +50,7 @@ export default function AccountSettings({ user }) {
       <label htmlFor="settings-confirm">Type <strong>{user.email}</strong> to confirm</label><input id="settings-confirm" autoComplete="off" value={confirm} onChange={(e) => setConfirm(e.target.value)} required/>
       <label htmlFor="settings-delete-password">Password</label><input id="settings-delete-password" type="password" autoComplete="current-password" maxLength={1024} value={deletePassword} onChange={(e) => setDeletePassword(e.target.value)} required/>
       <Result state={removal}/>
-      <button className="account-secondary" type="submit" disabled={removal.busy || confirm !== user.email}>{removal.busy ? 'Deleting…' : 'Delete account and workspaces'}</button>
+      <button className="account-secondary account-danger" type="submit" disabled={removal.busy || confirm !== user.email}>{removal.busy ? 'Deleting…' : 'Delete account and workspaces'}</button>
     </form>
   </section>;
 }

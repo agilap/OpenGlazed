@@ -15,7 +15,7 @@ const auth = require('./auth');
 const traces = require('./services/traces');
 const { reembedMissing } = require('./ingest');
 const { embedTexts } = require('./services/llm');
-const { ingestDocument, removeDocument, documentTypeFor, BINARY_TYPES } = require('./sources');
+const { ingestDocument, removeDocument, recoverInterrupted, documentTypeFor, BINARY_TYPES } = require('./sources');
 
 const app  = express();
 const port = process.env.PORT || 3000;
@@ -172,6 +172,7 @@ app.get('/api/auth/me', asyncRoute(async function (req, res) {
   const businesses = await db.query("SELECT b.id, b.name, b.url, b.ingest_status, (SELECT count(*)::int FROM documents d WHERE d.business_id = b.id AND d.status = 'ready') AS document_count, (SELECT count(*)::int FROM inbox_items i WHERE i.business_id = b.id AND i.status = 'unanswered' AND i.resolved_at IS NULL) AS open_unanswered FROM businesses b WHERE b.owner_id = $1 ORDER BY b.id DESC", [user.id]);
   res.set('Cache-Control', 'no-store').json({ user: publicUser(user), businesses: businesses.rows });
 }));
+app.get('/api/auth/config', function (req, res) { res.json({ passwordReset: mailConfigured() }); });
 app.post('/api/auth/logout', asyncRoute(async function (req, res) { await auth.logout(req, res); res.status(204).end(); }));
 app.post('/api/auth/logout-all', requireUser, asyncRoute(async function (req, res) {
   await db.query('DELETE FROM user_sessions WHERE user_id = $1', [req.user.id]);
@@ -366,11 +367,16 @@ app.post('/api/inbox/:businessId/:itemId/answer', requireAdmin, asyncRoute(async
   if (!found.rowCount) return res.status(404).json({ error: 'Item not found' });
   const item = found.rows[0];
   const document = await db.createDocument(req.params.businessId, 'Answer: ' + item.question.slice(0, 60), 'paste');
+  // Resolve only once the answer is searchable; on failure the question stays open and the owner keeps their text.
+  try {
+    await ingestDocument(req.params.businessId, document, { text: 'Q: ' + item.question + '\n\nA: ' + answer });
+  } catch (err) {
+    console.error('[sources] answer ingest failed for', req.params.businessId, document.id, err.message);
+    await removeDocument(req.params.businessId, document.id).catch(function () {});
+    return res.status(502).json({ error: 'Could not add this answer to your knowledge. The question is still open; try again.' });
+  }
   const updated = await db.query('UPDATE inbox_items SET resolved_at = COALESCE(resolved_at, now()) WHERE business_id = $1 AND id = $2 RETURNING *', [req.params.businessId, req.params.itemId]);
-  res.status(202).json({ document, item: updated.rows[0] });
-  ingestDocument(req.params.businessId, document, { text: 'Q: ' + item.question + '\n\nA: ' + answer }).catch(function (err) {
-    console.error('[sources] ingest failed for', req.params.businessId, document.id, err.message);
-  });
+  res.json({ document: await db.getDocument(req.params.businessId, document.id), item: updated.rows[0] });
 }));
 
 app.get('/api/businesses/:id/dashboard', requireAdmin, asyncRoute(async function (req, res) {
@@ -489,18 +495,24 @@ async function handleChatStream(req, res, surface) {
         onToken:    function (t) { send({ token: t }); },
       }));
 
+      // Classify before the final event so non-answers carry no sources and can offer a follow-up.
+      var classification = await traces.stage('classify', async function () {
+        return classifyExchange({ question: message, answer: result.response, chunks: result.chunks, business, topicContext: await db.getClassificationContext(businessId), result, confidence: result.confidence });
+      }).catch(function () { return null; });
+      var status = classification ? classification.status : null;
       send({
         done: true,
-        ...(surface === 'widget' ? { followUp: Boolean(result.escalated || /^\s*\[UNANSWERED\]/i.test(result.response || '')) } : {}),
+        ...(surface === 'widget' ? { followUp: Boolean(result.escalated || status === 'unanswered' || /^\s*\[UNANSWERED\]/i.test(result.response || '')) } : {}),
+        status:     status,
         escalated:  result.escalated,
         source:     result.source,
         confidence: result.confidence,
         sessionId:  sessionId,
-        citations:  result.citations,
+        citations:  !status || status === 'answered' ? result.citations : [],
         traceId: trace.id,
       });
       res.end();
-      recordExchange(businessId, sessionId, surface, message, result, business);
+      recordExchange(businessId, sessionId, surface, message, result, business, classification || undefined);
       return result;
     } catch (err) {
       traces.recordError(err);
@@ -757,6 +769,8 @@ async function embeddingDim() {
 
 async function prepareDatabase() {
   await db.ensureSchema(null);
+  const recovered = await recoverInterrupted();
+  if (recovered.failed || recovered.deleting) console.log('[sources] recovered after restart: ' + recovered.failed + ' interrupted, ' + recovered.deleting + ' pending deletes');
   const dim = await embeddingDim();
   if (dim !== embedCfg.dim) console.log('[db] ' + embedCfg.model + ' returns ' + dim + '-dimension vectors');
   embedCfg.dim = dim;

@@ -115,6 +115,10 @@ test('documents are scoped to their workspace and stats use document metrics', {
     assert.deepEqual(Object.keys(stats).sort(), ['conversations', 'documents', 'medianLatencyMs', 'offTopic', 'questionsAnswered', 'totalLeads', 'unansweredRate']);
     assert.equal(stats.unansweredRate, null);
     assert.equal(stats.medianLatencyMs, null);
+    for (const status of ['answered', 'unanswered', 'off_topic', 'smalltalk']) await db.saveMessage(businessA, 'stats-session', 'assistant', 'reply', { channel: 'widget', answer_status: status });
+    const counted = await (await fetch(`${base}/api/dashboard/${businessA}/stats`, { headers: { cookie: cookieA } })).json();
+    assert.equal(counted.questionsAnswered, 1, 'only answered questions count');
+    assert.equal(counted.unansweredRate, 0.5, 'per on-topic question, not per conversation');
 
     assert.equal((await fetch(`${base}/api/sources/${businessA}/${doc.id}`, { method: 'DELETE', headers: { cookie: cookieA } })).status, 202);
     for (let i = 0; i < 50 && (await db.listDocuments(businessA)).length; i += 1) await new Promise((r) => setTimeout(r, 100));

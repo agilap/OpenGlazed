@@ -12,6 +12,11 @@ export default function Account({ mode }) {
   const [account, setAccount] = useState(null);
   const [loading, setLoading] = useState(!mode);
   const [error, setError] = useState('');
+  const [passwordReset, setPasswordReset] = useState(false);
+  useEffect(() => {
+    if (mode !== 'login') return;
+    fetch(`${API_BASE}/api/auth/config`).then((r) => r.ok ? r.json() : null).then((config) => setPasswordReset(Boolean(config?.passwordReset))).catch(() => {});
+  }, [mode]);
 
   useEffect(() => {
     if (mode) return;
@@ -62,7 +67,7 @@ export default function Account({ mode }) {
             <input id="account-email" type="email" autoComplete="email" placeholder="you@company.com" value={email} onChange={(e) => setEmail(e.target.value)} required />
             <label htmlFor="account-password">Password</label>
             <input id="account-password" type="password" autoComplete={signup ? 'new-password' : 'current-password'} minLength={signup ? 12 : undefined} maxLength={1024} value={password} onChange={(e) => setPassword(e.target.value)} aria-invalid={!!error} aria-describedby={[signup && 'account-password-hint', error && 'account-auth-error'].filter(Boolean).join(' ') || undefined} required />
-            {signup ? <small id="account-password-hint">Use at least 12 characters.</small> : <small><Link to="/forgot">Forgot password?</Link></small>}
+            {signup ? <small id="account-password-hint">Use at least 12 characters.</small> : passwordReset && <small><Link to="/forgot">Forgot password?</Link></small>}
             {error && <p id="account-auth-error" className="account-error" role="alert">{error}</p>}
             <button type="submit" disabled={loading}>{loading && <svg className="account-spinner" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true"><circle cx="12" cy="12" r="9" opacity=".3" /><path d="M12 3a9 9 0 0 1 9 9" /></svg>}{loading ? 'Please wait…' : signup ? 'Create account' : 'Sign in'}</button>
           </form>
