@@ -94,7 +94,7 @@ test('documents are scoped to their workspace and stats use document metrics', {
     assert.equal((await fetch(`${base}/api/sources/${businessB}/${doc.id}`, { method: 'DELETE', headers: { cookie: cookieB } })).status, 404);
 
     const stats = await (await fetch(`${base}/api/dashboard/${businessA}/stats`, { headers: { cookie: cookieA } })).json();
-    assert.deepEqual(Object.keys(stats).sort(), ['conversations', 'documents', 'medianLatencyMs', 'questionsAnswered', 'totalLeads', 'unansweredRate']);
+    assert.deepEqual(Object.keys(stats).sort(), ['conversations', 'documents', 'medianLatencyMs', 'offTopic', 'questionsAnswered', 'totalLeads', 'unansweredRate']);
     assert.equal(stats.unansweredRate, null);
     assert.equal(stats.medianLatencyMs, null);
 

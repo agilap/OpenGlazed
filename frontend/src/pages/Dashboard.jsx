@@ -8,10 +8,12 @@ import Leads from './workspace/Leads';
 import Traces from './workspace/Traces';
 import Api from './workspace/Api';
 import Embed from './workspace/Embed';
+import Inbox from './workspace/Inbox';
+import Settings from './workspace/Settings';
 
-const views = { overview: Overview, documents: Documents, conversations: Conversations, leads: Leads, traces: Traces, api: Api, embed: Embed };
+const views = { overview: Overview, documents: Documents, conversations: Conversations, leads: Leads, traces: Traces, api: Api, embed: Embed, inbox: Inbox, settings: Settings };
 const descriptions = { documents: 'PDF, DOCX, Markdown, TXT, CSV or JSON, up to 18 MB each.' };
-const titles = { overview: 'Overview', documents: 'Documents', conversations: 'Conversations', leads: 'Leads', traces: 'Traces', api: 'API', embed: 'Embed' };
+const titles = { overview: 'Overview', documents: 'Documents', conversations: 'Conversations', leads: 'Leads', traces: 'Traces', api: 'API', embed: 'Embed', inbox: 'Inbox', settings: 'Settings' };
 export default function Dashboard() {
   const { id, view } = useParams();
   const workspace = useWorkspace(id);

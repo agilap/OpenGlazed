@@ -72,11 +72,11 @@ export default function Account({ mode }) {
         <div className="account-workspace-heading"><div><p className="account-eyebrow">WORKSPACE</p><h1>Your workspaces</h1><p>{account?.user.email}</p></div></div>
         {error && <p className="account-error account-error-light" role="alert">{error}</p>}
         {loading ? <div className="account-grid" role="status" aria-label="Loading workspaces"><div className="account-skeleton" /><div className="account-skeleton" /></div> : <div className="account-grid">
-          {account?.businesses.map((business) => {
+          {(account?.businesses || []).map((business) => {
             const date = business.created_at && new Date(business.created_at);
-            return <Link className="account-card" key={business.id} to={`/dashboard/${business.id}/overview`}><strong>{business.name}</strong><span className="account-status"><span className={`account-status-dot account-status-dot--${business.ingest_status || 'pending'}`} />{business.ingest_status || 'pending'}</span>{date && !Number.isNaN(date.getTime()) && <small>Created {date.toLocaleDateString()}</small>}</Link>;
+            return <Link className="account-card" key={business.id} to={`/dashboard/${business.id}/overview`}><strong>{business.name}</strong><span className="account-status"><span className={`account-status-dot account-status-dot--${business.ingest_status || 'pending'}`} />{business.ingest_status || 'pending'}</span>{business.document_count != null && <small>{business.document_count} ready documents</small>}{Number(business.open_unanswered) > 0 && <span className="account-unanswered">{business.open_unanswered} unanswered</span>}{date && !Number.isNaN(date.getTime()) && <small>Created {date.toLocaleDateString()}</small>}</Link>;
           })}
-          <Link className="account-card account-card-new" to="/#start"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>New workspace</Link>
+          <Link className="account-card account-card-new" to="/workspaces/new"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>New workspace</Link>
         </div>}
       </section>}
     </div>

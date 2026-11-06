@@ -283,3 +283,15 @@ Open `/signup` to create an account, then sign in at `/login`. Each account can 
 The database is persisted in the `glazed_pgdata` Docker volume and is bound to localhost on port 55434 by default. Set `POSTGRES_PORT` when starting Compose to use a different host port, and update `DATABASE_URL` in `backend/.env` accordingly for a backend running outside Docker. Do not run database tests against data you need to retain: use a separate database initialized with `db/init.sql`.
 
 For HTTPS deployments, set `COOKIE_SECURE=true` and configure `FRONTEND_ORIGIN` to the exact frontend origin. Account recovery and email verification are not yet implemented.
+
+## Inbox, guardrails, and notifications
+
+Each workspace has an inbox for questions classified as `unanswered`, `off_topic`, or `blocked`. Unanswered questions are in scope but missing from the documents; off-topic questions and blocked harmful or instruction-override requests do not count as unanswered. Replies also receive `answered` or `smalltalk` status. Workspace scope helps the assistant distinguish relevant questions, and its guardrails instruct it to stay within that scope, avoid guessing, and refuse harmful requests or attempts to expose its instructions. The inbox supports resolving items and adding an answer to the workspace documents.
+
+Email for unanswered questions is optional. Set the workspace notification address and enable notifications in its settings, then configure `SMTP_HOST`, `SMTP_PORT` (default `587`), `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, `SMTP_SECURE` (`true` or `false`), and `APP_URL` (default `http://localhost:5173`) in the backend environment. Without `SMTP_HOST`, inbox items are still recorded and no email is sent.
+
+To assign a workspace created with `ADMIN_TOKEN` to an existing account, run from the repository root:
+
+```bash
+npm run assign-owner -w backend -- <businessId> <email>
+```

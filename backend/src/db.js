@@ -23,10 +23,11 @@ if (!process.env.DATABASE_URL) {
 const businessCache = new Map();
 
 function clearBusinessCache(businessId) {
-  businessCache.delete(businessId);
+  businessCache.delete(String(businessId));
 }
 
 async function getClient(businessId) {
+  businessId = String(businessId);
   if (businessCache.has(businessId)) {
     return businessCache.get(businessId);
   }
@@ -38,6 +39,15 @@ async function getClient(businessId) {
 
   businessCache.set(businessId, rows[0]);
   setTimeout(() => businessCache.delete(businessId), 5 * 60 * 1000).unref();
+  return rows[0];
+}
+
+async function getClassificationContext(businessId) {
+  const { rows } = await pool.query(
+    `SELECT ARRAY(SELECT filename FROM documents WHERE business_id = $1 AND status = 'ready' ORDER BY id DESC LIMIT 20) AS filenames,
+            (SELECT LEFT(content, 800) FROM summaries WHERE business_id = $1 AND level = 2 ORDER BY id DESC LIMIT 1) AS summary`,
+    [businessId]
+  );
   return rows[0];
 }
 
@@ -55,8 +65,8 @@ async function updateIngestProgress(businessId, progress) {
 
 async function saveMessage(businessId, sessionId, role, content, metadata = {}) {
   await pool.query(
-    `INSERT INTO messages (business_id, session_id, role, content, confidence, escalated, source, channel)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    `INSERT INTO messages (business_id, session_id, role, content, confidence, escalated, source, channel, answer_status)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
     [
       businessId,
       sessionId,
@@ -66,6 +76,7 @@ async function saveMessage(businessId, sessionId, role, content, metadata = {}) 
       metadata.escalated ?? false,
       metadata.source ?? null,
       metadata.channel ?? 'widget',
+      metadata.answer_status ?? null,
     ]
   );
   return null;
@@ -171,14 +182,15 @@ async function getTopQuestions(businessId, days = 7) {
 }
 
 async function getDashboardStats(businessId) {
-  const [docs, convo, leads, latency] = await Promise.all([
+  const [docs, convo, leads, latency, offTopic] = await Promise.all([
     pool.query("SELECT COUNT(*) FILTER (WHERE status = 'ready')::int AS c FROM documents WHERE business_id = $1", [businessId]),
-    pool.query(`SELECT COUNT(*) FILTER (WHERE role = 'assistant')::int AS answered,
+    pool.query(`SELECT COUNT(*) FILTER (WHERE role = 'assistant' AND (answer_status IS NULL OR answer_status NOT IN ('smalltalk', 'blocked', 'off_topic')))::int AS answered,
                        COUNT(DISTINCT session_id)::int AS conversations,
-                       COUNT(DISTINCT session_id) FILTER (WHERE role = 'assistant' AND (escalated OR confidence = 'low'))::int AS unanswered
+                       COUNT(DISTINCT session_id) FILTER (WHERE role = 'assistant' AND answer_status = 'unanswered')::int AS unanswered
                 FROM messages WHERE business_id = $1 AND channel IN ('widget', 'team', 'api') AND session_id IS NOT NULL`, [businessId]),
     pool.query('SELECT COUNT(*)::int AS c FROM leads WHERE business_id = $1', [businessId]),
     pool.query('SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms) AS p50 FROM request_traces WHERE business_id = $1', [businessId]),
+    pool.query("SELECT COUNT(*)::int AS c FROM inbox_items WHERE business_id = $1 AND status = 'off_topic'", [businessId]),
   ]);
   const { answered, conversations, unanswered } = convo.rows[0];
   const p50 = latency.rows[0].p50;
@@ -189,6 +201,7 @@ async function getDashboardStats(businessId) {
     unansweredRate: conversations > 0 ? unanswered / conversations : null,
     medianLatencyMs: p50 === null ? null : Math.round(Number(p50)),
     totalLeads: leads.rows[0].c,
+    offTopic: offTopic.rows[0].c,
   };
 }
 
@@ -435,6 +448,7 @@ module.exports = {
   pool,
   clearBusinessCache,
   getClient,
+  getClassificationContext,
   updateClientStatus,
   updateIngestProgress,
   saveMessage,
@@ -495,7 +509,27 @@ module.exports = {
 
 async function ensureSchema(dim = 1536) {
   await ensureTraceSchema();
-  await pool.query(`CREATE TABLE IF NOT EXISTS documents (
+  await pool.query(`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS scope text;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS greeting text;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS accent_color text;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS notify_email text;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS notify_on_unanswered boolean NOT NULL DEFAULT true;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS answer_status text;
+CREATE TABLE IF NOT EXISTS inbox_items (
+  id bigserial PRIMARY KEY,
+  business_id bigint NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  session_id text,
+  channel text NOT NULL,
+  status text NOT NULL,
+  question text NOT NULL,
+  answer text,
+  reason text,
+  notified_at timestamptz,
+  resolved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_inbox_items_business ON inbox_items(business_id, resolved_at, created_at DESC);
+CREATE TABLE IF NOT EXISTS documents (
   id           BIGSERIAL PRIMARY KEY,
   business_id  BIGINT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
   filename     TEXT NOT NULL,

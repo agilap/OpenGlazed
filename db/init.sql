@@ -265,3 +265,24 @@ CREATE TABLE IF NOT EXISTS user_sessions (
 );
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS owner_id BIGINT REFERENCES users(id);
 CREATE INDEX IF NOT EXISTS idx_businesses_owner ON businesses(owner_id);
+
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS scope text;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS greeting text;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS accent_color text;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS notify_email text;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS notify_on_unanswered boolean NOT NULL DEFAULT true;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS answer_status text;
+CREATE TABLE IF NOT EXISTS inbox_items (
+  id bigserial PRIMARY KEY,
+  business_id bigint NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  session_id text,
+  channel text NOT NULL,
+  status text NOT NULL,
+  question text NOT NULL,
+  answer text,
+  reason text,
+  notified_at timestamptz,
+  resolved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_inbox_items_business ON inbox_items(business_id, resolved_at, created_at DESC);

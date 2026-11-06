@@ -8,12 +8,13 @@ const API_BASE = import.meta.env.VITE_API_BASE || '';
 
 export default function EmbedWidgetPage() {
   const { id } = useParams();
-  const [name, setName] = useState('');
-  const config = useMemo(() => widgetConfig(window.location.search), []);
+  const [business, setBusiness] = useState(null);
+  const name = business?.name || ''; 
+  const config = useMemo(() => { const params = new URLSearchParams(window.location.search); const parsed = widgetConfig(window.location.search); return { ...parsed, greeting: params.has('greeting') ? parsed.greeting : business?.greeting || '', color: params.has('color') ? parsed.color : business?.accent_color || parsed.color }; }, [business]);
   useEffect(() => {
     const controller = new AbortController();
-    setName('');
-    fetch(`${API_BASE}/api/businesses/${id}`, { signal: controller.signal }).then((response) => response.ok ? response.json() : null).then((data) => setName(data?.business?.name || '')).catch(() => {});
+    setBusiness(null);
+    fetch(`${API_BASE}/api/businesses/${id}`, { signal: controller.signal }).then((response) => response.ok ? response.json() : null).then((data) => setBusiness(data?.business || null)).catch(() => {});
     return () => controller.abort();
   }, [id]);
   useEffect(() => {
@@ -23,6 +24,9 @@ export default function EmbedWidgetPage() {
     document.addEventListener('keydown', close);
     return () => document.removeEventListener('keydown', close);
   }, []);
+  if (new URLSearchParams(window.location.search).get('mode') === 'widget') {
+    return <div className="share-chat-bare"><EmbeddableWidget businessId={id} config={config} /></div>;
+  }
   return <div className="share-chat-page">
     <header className="share-chat-header"><a href="/">Glazed AI</a><span>{name ? `Answers from ${name}'s documents` : 'Answers from uploaded documents'}</span></header>
     <main className="share-chat-main"><EmbeddableWidget businessId={id} config={config} /></main>

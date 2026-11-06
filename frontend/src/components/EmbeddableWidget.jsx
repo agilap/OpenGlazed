@@ -40,6 +40,7 @@ export default function EmbeddableWidget({ businessId, config = {} }) {
   const [sessionId, setSessionId] = useState('');
   const [leadCaptured, setLeadCaptured] = useState(false);
   const [gateSkipped, setGateSkipped] = useState(false);
+  const [followUp, setFollowUp] = useState(false);
   const [gateExpanded, setGateExpanded] = useState(() => !window.matchMedia('(max-height: 650px)').matches);
   const [escalationEmail, setEscalationEmail] = useState('');
   const [escalationSubmitted, setEscalationSubmitted] = useState(false);
@@ -152,6 +153,10 @@ export default function EmbeddableWidget({ businessId, config = {} }) {
 
     return () => clearTimeout(timeout);
   }, [businessName, greetingReady, config.greeting]);
+
+  useEffect(() => {
+    if (config.greeting) setMessages((prev) => prev.map((m) => m.isGreeting ? { ...m, content: config.greeting } : m));
+  }, [config.greeting]);
 
   useEffect(() => {
     if (messagesContainerRef.current && nearBottomRef.current) {
@@ -285,7 +290,8 @@ export default function EmbeddableWidget({ businessId, config = {} }) {
                 : m
             )
           );
-          if (evt.escalated && !leadCaptured && !email) {
+          if (evt.followUp && !leadCaptured && !gateSkipped) { setFollowUp(true); setGateExpanded(true); }
+          if (evt.escalated && !leadCaptured && !email && !evt.followUp) {
             setEscalationSubmitted(false);
           }
         }
@@ -446,7 +452,7 @@ export default function EmbeddableWidget({ businessId, config = {} }) {
       {shouldShowGate && (gateExpanded ? (
         <form className="gzd-gate" onSubmit={startChat}>
           <h2>Want a follow-up?</h2>
-          <p>Leave your email and we&apos;ll get back to you.</p>
+          <p>{followUp ? "I couldn't find that in the documents. Leave your email and the team will follow up." : "Leave your email and we'll get back to you."}</p>
           <div className="gzd-gate-fields">
             <input aria-label="Name (optional)" placeholder="Name (optional)" value={name} onChange={(e) => setName(e.target.value)} />
             <input aria-label="Email" type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required />

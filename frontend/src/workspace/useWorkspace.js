@@ -14,6 +14,8 @@ export function useWorkspace(businessId) {
   const [needToken, setNeedToken] = useState(false);
   const [user, setUser] = useState(null);
   const [signedIn, setSignedIn] = useState(false);
+  const [workspaces, setWorkspaces] = useState([]);
+  const [inboxCounts, setInboxCounts] = useState({});
 
   const saveToken = useCallback((token) => {
     setAdminToken(token);
@@ -54,7 +56,7 @@ export function useWorkspace(businessId) {
         request(`/api/sources/${businessId}`), request(`/api/ingest/${businessId}/status`, false),
       ]);
       setBusiness({ ...dashboard.business, ingest_status: ingest.status, ingest_progress: ingest.ingest_progress });
-      setStats({ documents: nextStats.documents ?? null, questionsAnswered: nextStats.questionsAnswered ?? null, unansweredRate: nextStats.unansweredRate ?? null, medianLatencyMs: nextStats.medianLatencyMs ?? null, totalLeads: nextStats.totalLeads ?? null });
+      setStats({ documents: nextStats.documents ?? null, questionsAnswered: nextStats.questionsAnswered ?? null, unansweredRate: nextStats.unansweredRate ?? null, medianLatencyMs: nextStats.medianLatencyMs ?? null, totalLeads: nextStats.totalLeads ?? null, offTopic: nextStats.offTopic ?? null });
       setConversations(Array.isArray(sessions) ? sessions : []);
       setLeads(Array.isArray(nextLeads) ? nextLeads : []);
       setDocuments(Array.isArray(sources.documents) ? sources.documents : []);
@@ -66,10 +68,11 @@ export function useWorkspace(businessId) {
   }, [businessId, request, setDocuments]);
   useEffect(() => {
     fetch(`${API_BASE}/api/auth/me`, { credentials: 'include' }).then(async (response) => {
-      if (response.ok) { const data = await response.json(); setUser(data.user || data); setSignedIn(true); }
+      if (response.ok) { const data = await response.json(); setUser(data.user || data); setWorkspaces(data.businesses || []); setSignedIn(true); }
     }).catch(() => {});
   }, []);
   useEffect(() => { reload(); }, [reload, signedIn]);
+  useEffect(() => { if (!businessId) return; let active = true; authedFetch(`${API_BASE}/api/inbox/${businessId}?status=unanswered&state=open`).then((r) => r.ok ? r.json() : null).then((data) => { if (active && data?.counts) setInboxCounts(data.counts); }).catch(() => {}); return () => { active = false; }; }, [businessId, authedFetch, signedIn]);
   useEffect(() => {
     if (!businessId) return undefined;
     const timer = setInterval(() => {
@@ -78,5 +81,5 @@ export function useWorkspace(businessId) {
     }, 5000);
     return () => clearInterval(timer);
   }, [businessId, request, refreshDocuments]);
-  return { business, stats, conversations, leads, documents, status, error, adminToken, saveToken, signedIn, user, needToken, setNeedToken, authedFetch, reload, refreshDocuments, setDocuments };
+  return { business, stats, workspaces, inboxCounts, setInboxCounts, conversations, leads, documents, status, error, adminToken, saveToken, signedIn, user, needToken, setNeedToken, authedFetch, reload, refreshDocuments, setDocuments };
 }

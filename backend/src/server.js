@@ -8,6 +8,8 @@ const crypto  = require('node:crypto');
 
 const { evaluateAnswer } = require('./services/generator');
 const { runAgent }  = require('./services/agent');
+const { classifyExchange } = require('./services/guard');
+const { notifyUnanswered } = require('./services/notify');
 const db            = require('./db');
 const auth = require('./auth');
 const traces = require('./services/traces');
@@ -36,7 +38,7 @@ async function requireAdmin(req, res, next) {
     if (!user) return res.status(401).json({ error: 'Sign in required' });
     const businessId = req.params.businessId || req.params.id;
     if (businessId) {
-      if (!/^[1-9]\d{0,18}$/.test(businessId)) return res.status(404).json({ error: 'Business not found' });
+      if (!validBusinessId(businessId)) return res.status(404).json({ error: 'Business not found' });
       const owned = await db.query('SELECT 1 FROM businesses WHERE id = $1 AND owner_id = $2', [businessId, user.id]);
       if (!owned.rowCount) return res.status(404).json({ error: 'Business not found' });
     }
@@ -103,7 +105,7 @@ app.post('/api/auth/login', limitAuth, asyncRoute(async function (req, res) {
 app.get('/api/auth/me', asyncRoute(async function (req, res) {
   const user = await auth.getUser(req);
   if (!user) return res.status(401).json({ error: 'Sign in required' });
-  const businesses = await db.query('SELECT id, name, url, ingest_status FROM businesses WHERE owner_id = $1 ORDER BY id DESC', [user.id]);
+  const businesses = await db.query("SELECT b.id, b.name, b.url, b.ingest_status, (SELECT count(*)::int FROM documents d WHERE d.business_id = b.id AND d.status = 'ready') AS document_count, (SELECT count(*)::int FROM inbox_items i WHERE i.business_id = b.id AND i.status = 'unanswered' AND i.resolved_at IS NULL) AS open_unanswered FROM businesses b WHERE b.owner_id = $1 ORDER BY b.id DESC", [user.id]);
   res.set('Cache-Control', 'no-store').json({ user, businesses: businesses.rows });
 }));
 app.post('/api/auth/logout', asyncRoute(async function (req, res) { await auth.logout(req, res); res.status(204).end(); }));
@@ -137,13 +139,95 @@ app.post('/api/businesses', requireAdmin, asyncRoute(async function (req, res) {
 }));
 
 app.get('/api/businesses/:id', asyncRoute(async function (req, res) {
-  var business = await db.getBusinessById(req.params.id);
+  var business = validBusinessId(req.params.id) ? await db.getBusinessById(req.params.id) : null;
 
   if (!business) {
     return res.status(404).json({ error: 'business not found' });
   }
 
-  return res.json({ business: business });
+  return res.json({ business: { id: business.id, name: business.name, greeting: business.greeting, accent_color: business.accent_color } });
+}));
+
+const settingsFields = ['name', 'scope', 'greeting', 'accent_color', 'notify_email', 'notify_on_unanswered'];
+
+app.get('/api/businesses/:id/settings', requireAdmin, asyncRoute(async function (req, res) {
+  if (!validBusinessId(req.params.id)) return res.status(404).json({ error: 'Business not found' });
+  const settings = await db.getBusinessProfileCols(req.params.id, settingsFields);
+  if (!settings) return res.status(404).json({ error: 'Business not found' });
+  res.json({ settings });
+}));
+
+app.patch('/api/businesses/:id/settings', requireAdmin, asyncRoute(async function (req, res) {
+  if (!validBusinessId(req.params.id)) return res.status(404).json({ error: 'Business not found' });
+  const body = req.body || {};
+  const fields = {};
+  for (const key of settingsFields) {
+    if (!Object.prototype.hasOwnProperty.call(body, key)) continue;
+    let value = body[key];
+    if (key === 'name') {
+      if (typeof value !== 'string' || !value.trim() || value.trim().length > 120) return res.status(400).json({ error: 'name must be 1–120 characters' });
+      value = value.trim();
+    } else if (key === 'scope' || key === 'greeting') {
+      if (typeof value !== 'string' || value.length > (key === 'scope' ? 600 : 300)) return res.status(400).json({ error: key + ' is too long or invalid' });
+    } else if (key === 'accent_color') {
+      if (value !== null && (typeof value !== 'string' || !/^#[0-9a-f]{6}$/i.test(value))) return res.status(400).json({ error: 'accent_color must be a six-digit hex color or null' });
+    } else if (key === 'notify_email') {
+      if (value === '' || value === null) value = null;
+      else if (typeof value !== 'string' || value.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return res.status(400).json({ error: 'notify_email must be a valid email or null' });
+    } else if (typeof value !== 'boolean') return res.status(400).json({ error: 'notify_on_unanswered must be a boolean' });
+    fields[key] = value;
+  }
+  const exists = await db.getBusinessProfileCols(req.params.id, settingsFields);
+  if (!exists) return res.status(404).json({ error: 'Business not found' });
+  await db.updateBusiness(req.params.id, fields);
+  db.clearBusinessCache(req.params.id);
+  res.json({ settings: await db.getBusinessProfileCols(req.params.id, settingsFields) });
+}));
+
+app.delete('/api/businesses/:id', requireAdmin, asyncRoute(async function (req, res) {
+  const business = validBusinessId(req.params.id) ? await db.getBusinessById(req.params.id) : null;
+  if (!business) return res.status(404).json({ error: 'Business not found' });
+  if (!req.body || req.body.confirm !== business.name) return res.status(400).json({ error: 'confirm must match the workspace name' });
+  await db.query('DELETE FROM businesses WHERE id = $1', [req.params.id]);
+  db.clearBusinessCache(req.params.id);
+  res.status(204).end();
+}));
+
+app.get('/api/inbox/:businessId', requireAdmin, asyncRoute(async function (req, res) {
+  if (!validBusinessId(req.params.businessId) || !await db.getBusinessById(req.params.businessId)) return res.status(404).json({ error: 'Business not found' });
+  const status = req.query.status || 'unanswered';
+  const state = req.query.state || 'open';
+  if (!['unanswered', 'off_topic', 'blocked'].includes(status) || !['open', 'resolved'].includes(state)) return res.status(400).json({ error: 'Invalid status or state' });
+  const [items, counts] = await Promise.all([
+    db.query(`SELECT * FROM inbox_items WHERE business_id = $1 AND status = $2 AND (resolved_at IS NULL) = $3 ORDER BY created_at DESC, id DESC LIMIT 100`, [req.params.businessId, status, state === 'open']),
+    db.query(`SELECT status, count(*)::int AS count FROM inbox_items WHERE business_id = $1 AND resolved_at IS NULL GROUP BY status`, [req.params.businessId]),
+  ]);
+  const totals = { unanswered: 0, off_topic: 0, blocked: 0 };
+  for (const row of counts.rows) if (Object.prototype.hasOwnProperty.call(totals, row.status)) totals[row.status] = row.count;
+  res.json({ items: items.rows, counts: totals });
+}));
+
+app.patch('/api/inbox/:businessId/:itemId', requireAdmin, asyncRoute(async function (req, res) {
+  if (!validBusinessId(req.params.businessId) || !validBusinessId(req.params.itemId)) return res.status(404).json({ error: 'Item not found' });
+  if (!req.body || typeof req.body.resolved !== 'boolean') return res.status(400).json({ error: 'resolved must be a boolean' });
+  const result = await db.query('UPDATE inbox_items SET resolved_at = CASE WHEN $3 THEN COALESCE(resolved_at, now()) ELSE NULL END WHERE business_id = $1 AND id = $2 RETURNING *', [req.params.businessId, req.params.itemId, req.body.resolved]);
+  if (!result.rowCount) return res.status(404).json({ error: 'Item not found' });
+  res.json({ item: result.rows[0] });
+}));
+
+app.post('/api/inbox/:businessId/:itemId/answer', requireAdmin, asyncRoute(async function (req, res) {
+  if (!validBusinessId(req.params.businessId) || !validBusinessId(req.params.itemId)) return res.status(404).json({ error: 'Item not found' });
+  const answer = req.body && req.body.answer;
+  if (typeof answer !== 'string' || !answer.trim() || answer.length > 4000) return res.status(400).json({ error: 'answer must be 1–4000 characters' });
+  const found = await db.query('SELECT * FROM inbox_items WHERE business_id = $1 AND id = $2', [req.params.businessId, req.params.itemId]);
+  if (!found.rowCount) return res.status(404).json({ error: 'Item not found' });
+  const item = found.rows[0];
+  const document = await db.createDocument(req.params.businessId, 'Answer: ' + item.question.slice(0, 60), 'paste');
+  const updated = await db.query('UPDATE inbox_items SET resolved_at = COALESCE(resolved_at, now()) WHERE business_id = $1 AND id = $2 RETURNING *', [req.params.businessId, req.params.itemId]);
+  res.status(202).json({ document, item: updated.rows[0] });
+  ingestDocument(req.params.businessId, document, { text: 'Q: ' + item.question + '\n\nA: ' + answer }).catch(function (err) {
+    console.error('[sources] ingest failed for', req.params.businessId, document.id, err.message);
+  });
 }));
 
 app.get('/api/businesses/:id/dashboard', requireAdmin, asyncRoute(async function (req, res) {
@@ -276,6 +360,7 @@ async function handleChatStream(req, res, surface) {
 
       send({
         done: true,
+        ...(surface === 'widget' ? { followUp: Boolean(result.escalated || /^\s*\[UNANSWERED\]/i.test(result.response || '')) } : {}),
         escalated:  result.escalated,
         source:     result.source,
         confidence: result.confidence,
@@ -284,7 +369,7 @@ async function handleChatStream(req, res, surface) {
         traceId: trace.id,
       });
       res.end();
-      recordExchange(businessId, sessionId, surface, message, result);
+      recordExchange(businessId, sessionId, surface, message, result, business);
       return result;
     } catch (err) {
       traces.recordError(err);
@@ -297,16 +382,25 @@ async function handleChatStream(req, res, surface) {
   });
 }
 
-function recordExchange(businessId, sessionId, surface, message, result) {
+function recordExchange(businessId, sessionId, surface, message, result, business, classification) {
   setImmediate(async function () {
     try {
+      if (!classification) {
+        const topicContext = await db.getClassificationContext(businessId);
+        classification = await classifyExchange({ question: message, answer: result.response, chunks: result.chunks, business, topicContext, result, confidence: result.confidence });
+      }
       await db.saveMessage(businessId, sessionId, 'visitor', message, { channel: surface });
       await db.saveMessage(businessId, sessionId, 'assistant', result.response, {
         confidence: result.confidence,
         escalated:  result.escalated,
         source:     result.source,
         channel:    surface,
+        answer_status: classification.status,
       });
+      if (['unanswered', 'off_topic', 'blocked'].includes(classification.status)) {
+        const inserted = await db.query('INSERT INTO inbox_items (business_id, session_id, channel, status, question, answer, reason) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *', [businessId, sessionId, surface, classification.status, message, result.response, classification.reason]);
+        if (classification.status === 'unanswered') await notifyUnanswered({ business, item: inserted.rows[0] });
+      }
 
       if (surface === 'widget' && !result.escalated && result.chunks.length > 0 && Math.random() < EVAL_SAMPLE_RATE) {
         var contents = result.chunks.map(function (c) { return c.content; });
@@ -517,15 +611,18 @@ app.post('/api/v1/ask', requireApiKey, asyncRoute(async function (req, res) {
       var result = await traces.stage('agent', () => runAgent({ businessId, business, surface: 'api', sessionId, history, message: question }));
       var marked = /^\s*\[UNANSWERED\]\s*:?\s*/i;
       if (marked.test(result.response || '')) result = { ...result, response: result.response.replace(marked, ''), escalated: true };
+      var topicContext = await db.getClassificationContext(businessId);
+      var classification = await classifyExchange({ question, answer: result.response, chunks: result.chunks, business, topicContext, result, confidence: result.confidence });
       res.json({
         answer: result.response,
         citations: result.citations.map(function (c) { return { index: c.index, source: c.source, excerpt: c.content }; }),
-        unanswered: Boolean(result.escalated) || result.confidence === 'low',
+        status: classification.status,
+        unanswered: classification.status === 'unanswered',
         confidence: result.confidence,
         sessionId: sessionId,
         traceId: trace.id,
       });
-      recordExchange(businessId, sessionId, 'api', question, result);
+      recordExchange(businessId, sessionId, 'api', question, result, business, classification);
       return result;
     } catch (err) {
       traces.recordError(err);
