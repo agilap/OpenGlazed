@@ -518,7 +518,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
 );
 CREATE INDEX IF NOT EXISTS idx_api_keys_business ON api_keys(business_id, id DESC);
 `);
-  const DIM = Number(dim) || 1536;
+  const DIM = Number(dim) || 0;
   const current = await pool.query(
     "SELECT atttypmod AS m FROM pg_attribute WHERE attrelid = 'chunks'::regclass AND attname = 'embedding'"
   );
@@ -536,11 +536,13 @@ CREATE INDEX IF NOT EXISTS idx_api_keys_business ON api_keys(business_id, id DES
     END IF;
   END $$;`);
 
-  if (curDim === DIM) return;
+  if (!DIM || curDim === DIM) return false;
 
   console.log(`[db] migrating vector dim ${curDim} -> ${DIM}`);
-  await pool.query(`ALTER TABLE chunks ALTER COLUMN embedding TYPE vector(${DIM});`);
-  await pool.query(`ALTER TABLE summaries ALTER COLUMN embedding TYPE vector(${DIM});`);
+  await pool.query('DROP INDEX IF EXISTS chunks_embedding_idx;');
+  await pool.query('DROP INDEX IF EXISTS summaries_embedding_idx;');
+  await pool.query(`ALTER TABLE chunks ALTER COLUMN embedding TYPE vector(${DIM}) USING NULL;`);
+  await pool.query(`ALTER TABLE summaries ALTER COLUMN embedding TYPE vector(${DIM}) USING NULL;`);
   await pool.query('DROP INDEX IF EXISTS chunks_embedding_idx;');
   await pool.query('DROP INDEX IF EXISTS summaries_embedding_idx;');
   await pool.query(`CREATE INDEX chunks_embedding_idx ON chunks USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);`);
@@ -571,6 +573,7 @@ CREATE INDEX IF NOT EXISTS idx_api_keys_business ON api_keys(business_id, id DES
       FROM summaries s WHERE s.business_id = p_business_id AND s.level = p_level AND s.embedding IS NOT NULL
       ORDER BY s.embedding <=> query_embedding LIMIT match_count;
     END; $$;`);
+  return true;
 }
 
 let traceSchemaPromise;

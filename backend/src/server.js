@@ -11,7 +11,8 @@ const { runAgent }  = require('./services/agent');
 const db            = require('./db');
 const auth = require('./auth');
 const traces = require('./services/traces');
-const { runIngest, ingestNormalized } = require('./ingest');
+const { runIngest, ingestNormalized, reembedMissing } = require('./ingest');
+const { embedTexts } = require('./services/llm');
 const { ingestDocument, removeDocument, documentTypeFor, BINARY_TYPES } = require('./sources');
 
 const app  = express();
@@ -553,10 +554,27 @@ if (!process.env.LLM_API_KEY) {
 }
 
 const { embed: embedCfg } = require('./services/modelConfig');
+async function embeddingDim() {
+  if (Number(process.env.EMBED_DIM) > 0) return Number(process.env.EMBED_DIM);
+  const [vector] = await embedTexts(['dimension probe']);
+  if (!Array.isArray(vector) || !vector.length) throw new Error('embedding provider returned no vector');
+  return vector.length;
+}
+
+async function prepareDatabase() {
+  await db.ensureSchema(null);
+  const dim = await embeddingDim();
+  if (dim !== embedCfg.dim) console.log('[db] ' + embedCfg.model + ' returns ' + dim + '-dimension vectors');
+  embedCfg.dim = dim;
+  if (await db.ensureSchema(dim)) console.log('[db] embedding model changed; re-embedding stored content');
+  const count = await reembedMissing();
+  if (count) console.log('[db] embedded ' + count + ' stored chunks and summaries');
+}
+
 function bootSchema(attempt) {
-  db.ensureSchema(embedCfg.dim).catch(function (err) {
+  prepareDatabase().catch(function (err) {
     const delay = Math.min(30000, 1000 * 2 ** attempt);
-    console.error('[db] ensureSchema failed, retrying in ' + delay / 1000 + 's:', err.message);
+    console.error('[db] startup setup failed, retrying in ' + delay / 1000 + 's:', err.message);
     setTimeout(bootSchema, delay, attempt + 1).unref();
   });
 }

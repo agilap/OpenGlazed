@@ -453,6 +453,25 @@ async function ingestNormalized(sections, { businessId, sourceType, sourceRef, s
   }
 }
 
+async function reembedMissing() {
+  const { query } = require('./db');
+  let total = 0;
+  for (const [table, column] of [['chunks', 'chunk_text'], ['summaries', 'content']]) {
+    let lastId = 0;
+    for (;;) {
+      const { rows } = await query(`SELECT id, ${column} AS text FROM ${table} WHERE embedding IS NULL AND id > $1 ORDER BY id LIMIT 64`, [lastId]);
+      if (!rows.length) break;
+      lastId = rows[rows.length - 1].id;
+      const vectors = await embedTexts(rows.map((row) => row.text));
+      for (let i = 0; i < rows.length; i += 1) {
+        if (Array.isArray(vectors[i])) await query(`UPDATE ${table} SET embedding = $2 WHERE id = $1`, [rows[i].id, `[${vectors[i].join(',')}]`]);
+      }
+      total += rows.length;
+    }
+  }
+  return total;
+}
+
 async function rebuildSummaries(businessId) {
   const allChunks = await getAllChunks(businessId);
   if (!allChunks.length) {
@@ -763,4 +782,4 @@ async function runIngest(businessId, url) {
   }
 }
 
-module.exports = { runIngest, ingestNormalized, rebuildSummaries, storeLevel0Chunks, buildSemanticChunks, extractCleanPageText };
+module.exports = { runIngest, ingestNormalized, rebuildSummaries, reembedMissing, storeLevel0Chunks, buildSemanticChunks, extractCleanPageText };

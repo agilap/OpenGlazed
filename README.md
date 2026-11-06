@@ -103,7 +103,7 @@ App URLs:
 ## Environment: models
 
 OpenGlazed is **model-agnostic**: it talks the OpenAI-compatible `/v1` API, so
-any provider works with three env vars.
+any provider works with three env vars: the AI URL, the API token and the model.
 
 ```bash
 LLM_BASE_URL=https://api.openai.com/v1   # or OpenRouter, Groq, Gemini, Anthropic, vLLM...
@@ -120,7 +120,18 @@ EMBED_MODEL=text-embedding-3-small
 The agent uses tool calling. Providers or models without it fall back to the
 plain retrieve-then-answer path automatically.
 
-Keep the embedding model and dimension consistent with existing data. The existing schema helper attempts dimension changes, but populated vectors may reject an incompatible dimension; switching models requires a planned migration and re-ingestion. This upgrade does not rewrite existing vectors.
+| Provider | `LLM_BASE_URL` | Embeddings |
+| --- | --- | --- |
+| OpenAI | `https://api.openai.com/v1` | same provider |
+| OpenRouter | `https://openrouter.ai/api/v1` | set `EMBED_*` to an embeddings provider |
+| Groq | `https://api.groq.com/openai/v1` | set `EMBED_*` |
+| Gemini | `https://generativelanguage.googleapis.com/v1beta/openai` | same provider (`text-embedding-004`) |
+| Anthropic | `https://api.anthropic.com/v1` | set `EMBED_*` |
+| Ollama | `http://localhost:11434/v1` | same provider (`nomic-embed-text`) |
+
+To switch providers, change the env vars and restart. At startup the backend asks the embedding model for one vector to learn its dimension, so `EMBED_DIM` is only needed to override that. If the dimension changed, the vector columns are migrated and every stored chunk and summary is re-embedded from its saved text in the background; no re-upload is needed. Answers from search are degraded until that finishes.
+
+When the backend runs in Docker, `localhost` means the container itself. Point `LLM_BASE_URL` at `http://host.docker.internal:11434/v1` to reach an Ollama on the host.
 
 ## Product flow
 
