@@ -127,8 +127,8 @@ Keep the embedding model and dimension consistent with existing data. The existi
 1. Sign up, name a workspace on `/`, and upload PDF, DOCX, Markdown, TXT, CSV or JSON files, or paste text
 2. Each document is parsed (PDFs page by page), chunked and embedded; the list shows its status
 3. Chunks are stored in the local Postgres + pgvector database for retrieval context
-4. You receive the embed snippet
-5. Anyone with the widget asks questions; conversations persist across reloads
+4. You receive the embed snippet, and can create API keys for your own apps
+5. Anyone with the widget, or your app through the API, asks questions; widget conversations persist across reloads
 6. The agent searches the knowledge base (dense + BM25 + RAPTOR) as needed, answers with citations, captures leads, or escalates
 7. Business sees recent conversations and captured leads on `/dashboard/:id`, and asks its own questions in team chat at `/team/:id`
 
@@ -243,6 +243,27 @@ The launcher is dependency-free (about 5 KB unminified). The widget preserves pa
 - Re-ingest is incremental: changed/added chunks are embedded; unchanged hashes retain their embeddings.
 - English FTS, approximate chunk/token budgets, synthetic evaluation coverage, and model citation compliance remain limitations. Scanned PDFs without a text layer are rejected (no OCR). Uploads are limited to 18 MB per file, and documents are processed one at a time per workspace by an in-process queue, so run a single API instance.
 - Existing sampled answer judging uses `EVAL_SAMPLE_RATE` (default 0.1); set `0` to disable those extra model calls. The repeatable eval harness is separate and offline by default.
+
+## Developer API
+
+Create a key in the dashboard's API section. Keys are scoped to one workspace, shown once, stored as SHA-256 hashes, and limited to 60 requests per minute. Send it as `Authorization: Bearer ogk_...`.
+
+| Method | Path | Body | Returns |
+| --- | --- | --- | --- |
+| `POST` | `/api/v1/ask` | `{ "question": "...", "sessionId": "optional" }` | `{ answer, citations: [{ index, source, excerpt }], unanswered, confidence, sessionId, traceId }` |
+| `GET` | `/api/v1/documents` | | `{ documents: [...] }` |
+| `POST` | `/api/v1/documents` | `{ "filename": "faq.md", "text": "..." }`, or `{ "filename": "policy.pdf", "data": "<base64>" }` for PDF and DOCX, or `{ "text": "..." }` to paste | `202 { document }` |
+| `GET` | `/api/v1/documents/:id` | | `{ document }` with `status`: `queued`, `processing`, `ready` or `error` |
+| `DELETE` | `/api/v1/documents/:id` | | `202` |
+
+```bash
+curl http://localhost:3000/api/v1/ask \
+  -H "Authorization: Bearer $OPENGLAZED_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"question": "How long do customers have to request a refund?"}'
+```
+
+Pass the returned `sessionId` back to keep a conversation. `unanswered` is `true` when the documents don't cover the question; those count toward the dashboard's Unanswered rate. A model provider failure returns `502` with a `traceId` you can look up in the dashboard's traces.
 
 ## Accounts and local database
 

@@ -491,3 +491,19 @@ textarea {
 .doclib--dark .doclib-remove:hover { background: #20202a; }
 .doclib--dark .doclib-error { color: #f87171; }
 @media (max-width: 760px) { .dashboard-documents { padding: 0 20px 24px; } .doclib-list li { flex-wrap: wrap; } }
+.apikeys { display: flex; flex-direction: column; gap: 16px; }
+.apikeys-create { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.apikeys-create label { flex-basis: 100%; color: var(--gz-muted); font-size: 13px; }
+.apikeys-create .dashboard-token-input { flex: 1 1 240px; font-family: Inter, sans-serif; font-size: 14px; }
+.apikeys-reveal { padding: 16px; border: 1px solid var(--gz-accent-soft); border-radius: 8px; background: #f4f4fe; }
+.apikeys-reveal p { margin: 0 0 10px; font-size: 14px; }
+.apikeys-reveal-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.apikeys-reveal code { flex: 1 1 260px; padding: 10px 12px; border: 1px solid var(--gz-line); border-radius: 6px; background: #fff; font: 13px var(--gz-mono); overflow-wrap: anywhere; }
+.apikeys-docs { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+.apikeys-endpoints { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
+.apikeys-endpoints code, .dashboard-section-note code { padding: 2px 6px; border: 1px solid var(--gz-line); border-radius: 4px; background: var(--gz-wash); font: 12px var(--gz-mono); }
+.apikeys-example { border: 1px solid var(--gz-line-dark); border-radius: 8px; overflow: hidden; background: var(--gz-card); }
+.apikeys-example-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 8px 8px 16px; border-bottom: 1px solid var(--gz-line-dark); color: var(--gz-muted-dark); font: 12px var(--gz-mono); }
+.apikeys-example-head .dashboard-action { min-height: 32px; border-color: #33333e; color: #f4f4f5; font-size: 12px; }
+.apikeys-example-head .dashboard-action:hover { background: var(--gz-raise); }
+.apikeys-example pre { margin: 0; padding: 16px; color: #f4f4f5; font: 12px/1.6 var(--gz-mono); white-space: pre-wrap; overflow-wrap: anywhere; }

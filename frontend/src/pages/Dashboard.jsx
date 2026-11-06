@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import AdminTokenForm from '../components/AdminTokenForm';
 import TracePanel from '../components/TracePanel';
 import DocumentLibrary from '../components/DocumentLibrary';
+import ApiKeys from '../components/ApiKeys';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 
@@ -278,6 +279,7 @@ export default function Dashboard() {
             <a className="dashboard-nav-item" href="#conversations">Conversations</a>
             <a className="dashboard-nav-item" href="#leads">Leads</a>
             <a className="dashboard-nav-item" href="#traces">Traces</a>
+            <a className="dashboard-nav-item" href="#api">API</a>
             <a className="dashboard-nav-item" href="#embed">Embed</a>
             <Link className="dashboard-nav-item" to={`/team/${businessId}`}>Team chat</Link>
           </nav>
@@ -412,6 +414,17 @@ export default function Dashboard() {
         </section>
 
         <TracePanel key={businessId} businessId={businessId} adminToken={adminToken} onUnauthorized={() => setNeedToken(true)} />
+
+        <section className="dashboard-table-card" id="api" aria-labelledby="api-heading">
+          <div className="dashboard-section-heading">
+            <h2 id="api-heading">API</h2>
+            <span>60 requests / minute per key</span>
+          </div>
+          <p className="dashboard-section-note">Let your own apps upload documents and ask questions. Keys belong to this workspace only. Answers return JSON with citations and an <code>unanswered</code> flag.</p>
+          <div className="dashboard-documents">
+            <ApiKeys businessId={businessId} adminToken={adminToken} onUnauthorized={() => setNeedToken(true)} />
+          </div>
+        </section>
 
         <section className="dashboard-embed-card" id="embed">
           <h2>Embed code</h2>

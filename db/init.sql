@@ -239,6 +239,18 @@ CREATE TABLE IF NOT EXISTS documents (
 );
 CREATE INDEX IF NOT EXISTS idx_documents_business ON documents(business_id, id DESC);
 
+CREATE TABLE IF NOT EXISTS api_keys (
+  id            BIGSERIAL PRIMARY KEY,
+  business_id   BIGINT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  name          TEXT NOT NULL,
+  prefix        TEXT NOT NULL,
+  key_hash      TEXT NOT NULL UNIQUE,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_used_at  TIMESTAMPTZ,
+  revoked_at    TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_api_keys_business ON api_keys(business_id, id DESC);
+
 CREATE TABLE IF NOT EXISTS users (
   id             BIGSERIAL PRIMARY KEY,
   email          TEXT NOT NULL UNIQUE,

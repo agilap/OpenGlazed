@@ -2,6 +2,7 @@
 
 const path = require('path');
 const fs = require('node:fs');
+const crypto = require('node:crypto');
 const { Pool } = require('pg');
 
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
@@ -175,7 +176,7 @@ async function getDashboardStats(businessId) {
     pool.query(`SELECT COUNT(*) FILTER (WHERE role = 'assistant')::int AS answered,
                        COUNT(DISTINCT session_id)::int AS conversations,
                        COUNT(DISTINCT session_id) FILTER (WHERE role = 'assistant' AND (escalated OR confidence = 'low'))::int AS unanswered
-                FROM messages WHERE business_id = $1 AND channel IN ('widget', 'team') AND session_id IS NOT NULL`, [businessId]),
+                FROM messages WHERE business_id = $1 AND channel IN ('widget', 'team', 'api') AND session_id IS NOT NULL`, [businessId]),
     pool.query('SELECT COUNT(*)::int AS c FROM leads WHERE business_id = $1', [businessId]),
     pool.query('SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms) AS p50 FROM request_traces WHERE business_id = $1', [businessId]),
   ]);
@@ -227,6 +228,41 @@ async function deleteDocument(businessId, id) {
 async function countChunksBySource(businessId, sourceRef) {
   const { rows } = await pool.query('SELECT COUNT(*)::int AS c FROM chunks WHERE business_id = $1 AND source_ref = $2 AND level = 0', [businessId, sourceRef]);
   return rows[0].c;
+}
+
+const hashKey = (key) => crypto.createHash('sha256').update(key).digest('hex');
+
+async function createApiKey(businessId, name) {
+  const key = 'ogk_' + crypto.randomBytes(24).toString('base64url');
+  const { rows } = await pool.query(
+    'INSERT INTO api_keys (business_id, name, prefix, key_hash) VALUES ($1, $2, $3, $4) RETURNING id, name, prefix, created_at, last_used_at',
+    [businessId, name, key.slice(0, 12), hashKey(key)]
+  );
+  return { ...rows[0], key };
+}
+
+async function listApiKeys(businessId) {
+  const { rows } = await pool.query(
+    'SELECT id, name, prefix, created_at, last_used_at FROM api_keys WHERE business_id = $1 AND revoked_at IS NULL ORDER BY id DESC',
+    [businessId]
+  );
+  return rows;
+}
+
+async function revokeApiKey(businessId, id) {
+  const { rowCount } = await pool.query(
+    'UPDATE api_keys SET revoked_at = now() WHERE id = $1 AND business_id = $2 AND revoked_at IS NULL',
+    [id, businessId]
+  );
+  return rowCount > 0;
+}
+
+async function findApiKey(key) {
+  const { rows } = await pool.query(
+    'UPDATE api_keys SET last_used_at = now() WHERE key_hash = $1 AND revoked_at IS NULL RETURNING id, business_id',
+    [hashKey(key)]
+  );
+  return rows[0] || null;
 }
 
 async function insertBusiness(name, url) {
@@ -441,6 +477,10 @@ module.exports = {
   },
   ensureSchema,
   createDocument,
+  createApiKey,
+  listApiKeys,
+  revokeApiKey,
+  findApiKey,
   updateDocument,
   listDocuments,
   getDocument,
@@ -466,6 +506,17 @@ async function ensureSchema(dim = 1536) {
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_documents_business ON documents(business_id, id DESC);
+CREATE TABLE IF NOT EXISTS api_keys (
+  id            BIGSERIAL PRIMARY KEY,
+  business_id   BIGINT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  name          TEXT NOT NULL,
+  prefix        TEXT NOT NULL,
+  key_hash      TEXT NOT NULL UNIQUE,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_used_at  TIMESTAMPTZ,
+  revoked_at    TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_api_keys_business ON api_keys(business_id, id DESC);
 `);
   const DIM = Number(dim) || 1536;
   const current = await pool.query(

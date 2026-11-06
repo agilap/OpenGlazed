@@ -4,6 +4,7 @@ require('dotenv').config()
 const path    = require('path');
 const express = require('express');
 const cors    = require('cors');
+const crypto  = require('node:crypto');
 
 const { evaluateAnswer } = require('./services/generator');
 const { runAgent }  = require('./services/agent');
@@ -442,6 +443,97 @@ app.get('/api/dashboard/:businessId/questions', requireAdmin, async function (re
     res.status(500).json({ error: err.message });
   }
 });
+
+app.get('/api/keys/:businessId', requireAdmin, asyncRoute(async function (req, res) {
+  res.set('Cache-Control', 'no-store').json({ keys: await db.listApiKeys(req.params.businessId) });
+}));
+
+app.post('/api/keys/:businessId', requireAdmin, asyncRoute(async function (req, res) {
+  var name = typeof (req.body || {}).name === 'string' ? req.body.name.trim().slice(0, 80) : '';
+  if (!name) return res.status(400).json({ error: 'Give the key a name.' });
+  res.set('Cache-Control', 'no-store').status(201).json({ key: await db.createApiKey(Number(req.params.businessId), name) });
+}));
+
+app.delete('/api/keys/:businessId/:keyId', requireAdmin, asyncRoute(async function (req, res) {
+  if (!/^[1-9]\d{0,18}$/.test(req.params.keyId)) return res.status(404).json({ error: 'Key not found' });
+  if (!await db.revokeApiKey(req.params.businessId, req.params.keyId)) return res.status(404).json({ error: 'Key not found' });
+  res.status(204).end();
+}));
+
+const apiCalls = new Map();
+async function requireApiKey(req, res, next) {
+  try {
+    var header = req.headers.authorization || '';
+    var key = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+    var found = /^ogk_[A-Za-z0-9_-]{32}$/.test(key) ? await db.findApiKey(key) : null;
+    if (!found) return res.status(401).json({ error: 'Invalid or revoked API key' });
+    var now = Date.now();
+    var recent = (apiCalls.get(found.id) || []).filter(function (time) { return now - time < 60 * 1000; });
+    if (recent.length >= 60) return res.status(429).json({ error: 'Rate limit is 60 requests per minute per key' });
+    recent.push(now);
+    apiCalls.set(found.id, recent);
+    req.businessId = Number(found.business_id);
+    next();
+  } catch (err) { next(err); }
+}
+
+app.get('/api/v1/documents', requireApiKey, asyncRoute(async function (req, res) {
+  res.json({ documents: await db.listDocuments(req.businessId) });
+}));
+
+app.post('/api/v1/documents', requireApiKey, asyncRoute(async function (req, res) {
+  return acceptDocument(req.businessId, req.body || {}, res);
+}));
+
+app.get('/api/v1/documents/:documentId', requireApiKey, asyncRoute(async function (req, res) {
+  var document = /^[1-9]\d{0,18}$/.test(req.params.documentId) ? await db.getDocument(req.businessId, req.params.documentId) : null;
+  if (!document) return res.status(404).json({ error: 'Document not found' });
+  res.json({ document: { id: document.id, filename: document.filename, source_type: document.source_type, status: document.status, chunk_count: document.chunk_count, error: document.error, created_at: document.created_at } });
+}));
+
+app.delete('/api/v1/documents/:documentId', requireApiKey, asyncRoute(async function (req, res) {
+  var document = /^[1-9]\d{0,18}$/.test(req.params.documentId) ? await db.getDocument(req.businessId, req.params.documentId) : null;
+  if (!document) return res.status(404).json({ error: 'Document not found' });
+  await db.updateDocument(document.id, { status: 'deleting', error: null });
+  res.status(202).json({ status: 'deleting' });
+  removeDocument(req.businessId, document.id).catch(function (err) {
+    console.error('[sources] delete failed for', req.businessId, document.id, err.message);
+  });
+}));
+
+app.post('/api/v1/ask', requireApiKey, asyncRoute(async function (req, res) {
+  var body = req.body || {};
+  var question = typeof body.question === 'string' ? body.question.trim() : '';
+  var sessionId = body.sessionId === undefined ? 'api-' + crypto.randomUUID() : body.sessionId;
+  if (!question || question.length > 4000) return res.status(400).json({ error: 'question must be a non-empty string of up to 4000 characters' });
+  if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 100) return res.status(400).json({ error: 'sessionId must be a string of up to 100 characters' });
+  var businessId = String(req.businessId);
+
+  return traces.runTrace({ businessId, sessionId, surface: 'api', query: question }, async function (trace) {
+    try {
+      var business = await traces.stage('business', () => db.getClient(businessId));
+      var history = await traces.stage('history', () => db.getHistory(businessId, sessionId, 'api'));
+      var result = await traces.stage('agent', () => runAgent({ businessId, business, surface: 'api', sessionId, history, message: question }));
+      var marked = /^\s*\[UNANSWERED\]\s*:?\s*/i;
+      if (marked.test(result.response || '')) result = { ...result, response: result.response.replace(marked, ''), escalated: true };
+      res.json({
+        answer: result.response,
+        citations: result.citations.map(function (c) { return { index: c.index, source: c.source, excerpt: c.content }; }),
+        unanswered: Boolean(result.escalated) || result.confidence === 'low',
+        confidence: result.confidence,
+        sessionId: sessionId,
+        traceId: trace.id,
+      });
+      recordExchange(businessId, sessionId, 'api', question, result);
+      return result;
+    } catch (err) {
+      traces.recordError(err);
+      console.error(JSON.stringify({ event: 'rag.request_error', trace_id: trace.id, message: err.message }));
+      res.status(502).json({ error: 'The model provider failed to answer. Try again.', traceId: trace.id });
+      return { source: 'error' };
+    }
+  });
+}));
 
 app.get('/health', function (_req, res) { res.json({ ok: true }); });
 
