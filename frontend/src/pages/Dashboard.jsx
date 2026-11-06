@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import AdminTokenForm from '../components/AdminTokenForm';
 import TracePanel from '../components/TracePanel';
+import DocumentLibrary from '../components/DocumentLibrary';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 
@@ -19,11 +20,7 @@ function normalizePriority(value) {
 export default function Dashboard() {
   const { id } = useParams();
   const [data, setData] = useState(null);
-  const [stats, setStats] = useState({
-    totalLeads: 0,
-    totalConversations: 0,
-    escalationRate: 0,
-  });
+  const [stats, setStats] = useState({ documents: 0, questionsAnswered: 0, unansweredRate: null, medianLatencyMs: null });
   const [ingestStatus, setIngestStatus] = useState({ status: '', ingest_progress: 0 });
   const [leads, setLeads] = useState([]);
   const [chats, setChats] = useState([]);
@@ -75,9 +72,10 @@ export default function Dashboard() {
       throw new Error(json.error || 'Failed to load stats');
     }
     setStats({
-      totalLeads: json.totalLeads || 0,
-      totalConversations: json.totalConversations || 0,
-      escalationRate: Math.round((json.escalationRate || 0) * 100),
+      documents: json.documents || 0,
+      questionsAnswered: json.questionsAnswered || 0,
+      unansweredRate: json.unansweredRate,
+      medianLatencyMs: json.medianLatencyMs,
     });
   }
 
@@ -276,8 +274,9 @@ export default function Dashboard() {
           <div className="dashboard-wordmark">Glazed AI</div>
           <nav className="dashboard-nav" aria-label="Dashboard">
             <a className="dashboard-nav-item dashboard-nav-item--active" href="#overview">Overview</a>
-            <a className="dashboard-nav-item" href="#leads">Leads</a>
+            <a className="dashboard-nav-item" href="#documents">Documents</a>
             <a className="dashboard-nav-item" href="#conversations">Conversations</a>
+            <a className="dashboard-nav-item" href="#leads">Leads</a>
             <a className="dashboard-nav-item" href="#traces">Traces</a>
             <a className="dashboard-nav-item" href="#embed">Embed</a>
             <Link className="dashboard-nav-item" to={`/team/${businessId}`}>Team chat</Link>
@@ -297,13 +296,15 @@ export default function Dashboard() {
         <header className="dashboard-header" id="overview">
           <div>
             <span className="dashboard-kicker">WORKSPACE / OVERVIEW</span><h1>{businessName}</h1>
-            <p>{data.business.url}</p>
+            {data.business.url ? <p>{data.business.url}</p> : null}
           </div>
           <div className="dashboard-actions">
             <button className="dashboard-action" type="button" onClick={copyEmbedCode}>{copied ? 'Copied!' : 'Copy embed code'}</button>
-            <button className="dashboard-action-primary" type="button" onClick={triggerReingest} disabled={reingesting}>
-              {reingesting ? 'Re-ingesting...' : 'Re-ingest'}
-            </button>
+            {data.business.url ? (
+              <button className="dashboard-action-primary" type="button" onClick={triggerReingest} disabled={reingesting}>
+                {reingesting ? 'Re-ingesting...' : 'Re-ingest'}
+              </button>
+            ) : <a className="dashboard-action-primary dashboard-action-link" href="#documents">Add documents</a>}
           </div>
         </header>
 
@@ -311,16 +312,21 @@ export default function Dashboard() {
 
         <section className="dashboard-stats-grid" aria-label="Stats">
           <article className="dashboard-stat-card">
-            <span className="dashboard-stat-label">Leads</span>
-            <strong className="dashboard-stat-value">{stats.totalLeads}</strong>
+            <span className="dashboard-stat-label">Documents</span>
+            <strong className="dashboard-stat-value">{stats.documents}</strong>
           </article>
           <article className="dashboard-stat-card">
-            <span className="dashboard-stat-label">Conversations</span>
-            <strong className="dashboard-stat-value">{stats.totalConversations}</strong>
+            <span className="dashboard-stat-label">Questions answered</span>
+            <strong className="dashboard-stat-value">{stats.questionsAnswered}</strong>
           </article>
           <article className="dashboard-stat-card">
-            <span className="dashboard-stat-label">Escalation rate</span>
-            <strong className="dashboard-stat-value">{stats.escalationRate}%</strong>
+            <span className="dashboard-stat-label">Unanswered</span>
+            <strong className="dashboard-stat-value">{stats.unansweredRate === null ? '—' : `${Math.round(stats.unansweredRate * 100)}%`}</strong>
+            <span className="dashboard-stat-hint">of conversations had a question the documents could not answer</span>
+          </article>
+          <article className="dashboard-stat-card">
+            <span className="dashboard-stat-label">Median answer time</span>
+            <strong className="dashboard-stat-value">{stats.medianLatencyMs === null ? '—' : `${(stats.medianLatencyMs / 1000).toFixed(1)}s`}</strong>
           </article>
         </section>
 
@@ -332,6 +338,47 @@ export default function Dashboard() {
             </div>
           </div>
         )}
+
+
+        <section className="dashboard-table-card" id="documents" aria-labelledby="documents-heading">
+          <div className="dashboard-section-heading">
+            <h2 id="documents-heading">Documents</h2>
+            <span>{stats.documents} ready</span>
+          </div>
+          <div className="dashboard-documents">
+            <DocumentLibrary businessId={businessId} adminToken={adminToken} onUnauthorized={() => setNeedToken(true)}
+              onDocuments={(docs) => setStats((current) => ({ ...current, documents: docs.filter((doc) => doc.status === 'ready').length }))} />
+          </div>
+        </section>
+
+        <section className="dashboard-table-card" id="conversations" aria-labelledby="conversations-heading">
+          <div className="dashboard-section-heading">
+            <h2 id="conversations-heading">Recent conversations</h2>
+            <span>{chats.filter((chat) => chat.escalated).length} needs reply</span>
+          </div>
+          <div className="dashboard-table-scroll">
+            <table className="dashboard-table">
+              <thead><tr>
+                <th scope="col">Conversation</th><th scope="col">Visitor</th><th scope="col">Messages</th><th scope="col">Last active</th>
+              </tr></thead>
+              <tbody>
+                {chats.map((chat) => (
+                  <tr key={chat.session_id}>
+                    <td><button className="dashboard-table-button" type="button" onClick={() => openTranscript(chat)}>
+                      {chat.escalated ? <span className="dashboard-needs-reply">needs reply</span> : null}
+                      {chat.title || '(no message)'}
+                    </button></td>
+                    <td>{chat.lead_name || chat.lead_email || 'Anonymous'}</td>
+                    <td>{chat.message_count}</td><td className="dashboard-date">{formatDate(chat.last_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {chats.length === 0 && (
+            <div className="dashboard-empty-state"><h3>No conversations yet</h3><p>Share the chat with the embed code, or <Link to={`/embed/${businessId}`} target="_blank" rel="noopener noreferrer">ask your documents</Link>.</p></div>
+          )}
+        </section>
 
         <section className="dashboard-table-card" id="leads" aria-labelledby="leads-heading">
           <div className="dashboard-section-heading">
@@ -360,36 +407,7 @@ export default function Dashboard() {
             </table>
           </div>
           {leads.length === 0 && (
-            <div className="dashboard-empty-state"><h3>No leads yet</h3><p>Leads appear here when a visitor leaves their details in the widget.</p></div>
-          )}
-        </section>
-
-        <section className="dashboard-table-card" id="conversations" aria-labelledby="conversations-heading">
-          <div className="dashboard-section-heading">
-            <h2 id="conversations-heading">Recent conversations</h2>
-            <span>{chats.filter((chat) => chat.escalated).length} needs reply</span>
-          </div>
-          <div className="dashboard-table-scroll">
-            <table className="dashboard-table">
-              <thead><tr>
-                <th scope="col">Conversation</th><th scope="col">Visitor</th><th scope="col">Messages</th><th scope="col">Last active</th>
-              </tr></thead>
-              <tbody>
-                {chats.map((chat) => (
-                  <tr key={chat.session_id}>
-                    <td><button className="dashboard-table-button" type="button" onClick={() => openTranscript(chat)}>
-                      {chat.escalated ? <span className="dashboard-needs-reply">needs reply</span> : null}
-                      {chat.title || '(no message)'}
-                    </button></td>
-                    <td>{chat.lead_name || chat.lead_email || 'Anonymous'}</td>
-                    <td>{chat.message_count}</td><td className="dashboard-date">{formatDate(chat.last_at)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {chats.length === 0 && (
-            <div className="dashboard-empty-state"><h3>No conversations yet</h3><p>Paste the embed code on your site, or <Link to={`/embed/${businessId}`} target="_blank" rel="noopener noreferrer">test your chatbot</Link>.</p></div>
+            <div className="dashboard-empty-state"><h3>No leads yet</h3><p>Contacts appear here when someone leaves their details in the chat widget.</p></div>
           )}
         </section>
 

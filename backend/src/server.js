@@ -11,7 +11,7 @@ const db            = require('./db');
 const auth = require('./auth');
 const traces = require('./services/traces');
 const { runIngest, ingestNormalized } = require('./ingest');
-const { ingestSource, SUPPORTED } = require('./sources');
+const { ingestDocument, removeDocument, documentTypeFor, BINARY_TYPES } = require('./sources');
 
 const app  = express();
 const port = process.env.PORT || 3000;
@@ -107,11 +107,11 @@ app.get('/api/auth/me', asyncRoute(async function (req, res) {
 app.post('/api/auth/logout', asyncRoute(async function (req, res) { await auth.logout(req, res); res.status(204).end(); }));
 
 app.post('/api/businesses', requireAdmin, asyncRoute(async function (req, res) {
-  var name = req.body.name;
-  var url  = req.body.url;
+  var name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
+  var url  = typeof req.body.url === 'string' ? req.body.url.trim() : '';
 
-  if (!name || !url) {
-    return res.status(400).json({ error: 'name and url are required' });
+  if (!name || name.length > 120) {
+    return res.status(400).json({ error: 'A workspace name of up to 120 characters is required' });
   }
 
   var business = req.user
@@ -129,7 +129,7 @@ app.post('/api/businesses', requireAdmin, asyncRoute(async function (req, res) {
     embedIframe: '<iframe src="' + embedOrigin + '/embed/' + business.id + '" width="360" height="560" style="border:0;position:fixed;right:20px;bottom:20px;z-index:999999;border-radius:12px;" title="' + name + ' assistant"></iframe>',
   });
 
-  runIngest(business.id, url).catch(function (err) {
+  if (url) runIngest(business.id, url).catch(function (err) {
     console.error('Background ingest failed for business', business.id, err.message);
   });
 }));
@@ -157,6 +157,7 @@ app.post('/api/ingest/:businessId', requireAdmin, asyncRoute(async function (req
   var businessId = req.params.businessId;
   var business = await db.getBusinessUrl(businessId);
   if (!business) return res.status(404).json({ error: 'Business not found' });
+  if (!business.url) return res.status(400).json({ error: 'This workspace has no website to re-index' });
 
   res.json({ status: 'started', message: 'Ingest triggered' });
   runIngest(businessId, business.url).catch(function (err) {
@@ -173,23 +174,53 @@ app.get('/api/ingest/:businessId/status', asyncRoute(async function (req, res) {
   });
 }));
 
+const MAX_DOCUMENT_BYTES = 18 * 1024 * 1024;
+
 app.post('/api/sources/:businessId', requireAdmin, asyncRoute(async function (req, res) {
   var businessId = Number(req.params.businessId);
   var business = await db.getBusinessById(businessId);
   if (!business) return res.status(404).json({ error: 'Business not found' });
+  return acceptDocument(businessId, req.body || {}, res);
+}));
 
-  var { sourceType, text, url, filename } = req.body || {};
-  if (!SUPPORTED.includes(sourceType)) {
-    return res.status(400).json({ error: 'Unsupported sourceType', supported: SUPPORTED });
+async function acceptDocument(businessId, body, res) {
+  var filename = typeof body.filename === 'string' ? body.filename.trim().slice(0, 200) : '';
+  var sourceType = filename ? documentTypeFor(filename) : 'paste';
+  if (!sourceType) return res.status(400).json({ error: 'Upload a PDF, DOCX, Markdown, TXT, CSV or JSON file.' });
+
+  var payload = {};
+  if (BINARY_TYPES.has(sourceType)) {
+    var data = typeof body.data === 'string' ? Buffer.from(body.data, 'base64') : Buffer.alloc(0);
+    var magic = sourceType === 'pdf' ? '%PDF' : 'PK';
+    if (data.subarray(0, magic.length).toString('latin1') !== magic) return res.status(400).json({ error: 'This file does not look like a valid ' + sourceType.toUpperCase() + '.' });
+    if (data.length > MAX_DOCUMENT_BYTES) return res.status(413).json({ error: 'Files must be 18 MB or smaller.' });
+    payload.data = data;
+  } else {
+    if (typeof body.text !== 'string' || !body.text.trim()) return res.status(400).json({ error: 'The document is empty.' });
+    if (Buffer.byteLength(body.text) > MAX_DOCUMENT_BYTES) return res.status(413).json({ error: 'Files must be 18 MB or smaller.' });
+    payload.text = body.text;
   }
 
-  res.json({ status: 'started', message: 'Source ingest triggered' });
+  var document = await db.createDocument(businessId, filename || 'Pasted text ' + new Date().toISOString().slice(0, 10), sourceType);
+  res.status(202).json({ document: document });
+  ingestDocument(businessId, document, payload).catch(function (err) {
+    console.error('[sources] ingest failed for', businessId, document.id, err.message);
+  });
+}
 
-  ingestSource(businessId, sourceType, { text, url, filename })
-    .then((r) => console.log('[sources]', sourceType, '->', r))
-    .catch(function (err) {
-      console.error('[sources] ingest failed for', businessId, sourceType, err.message);
-    });
+app.get('/api/sources/:businessId', requireAdmin, asyncRoute(async function (req, res) {
+  res.set('Cache-Control', 'no-store').json({ documents: await db.listDocuments(req.params.businessId) });
+}));
+
+app.delete('/api/sources/:businessId/:documentId', requireAdmin, asyncRoute(async function (req, res) {
+  if (!/^[1-9]\d{0,18}$/.test(req.params.documentId)) return res.status(404).json({ error: 'Document not found' });
+  var document = await db.getDocument(req.params.businessId, req.params.documentId);
+  if (!document) return res.status(404).json({ error: 'Document not found' });
+  await db.updateDocument(document.id, { status: 'deleting', error: null });
+  res.status(202).json({ status: 'deleting' });
+  removeDocument(req.params.businessId, document.id).catch(function (err) {
+    console.error('[sources] delete failed for', req.params.businessId, document.id, err.message);
+  });
 }));
 
 var EVAL_SAMPLE_RATE = process.env.EVAL_SAMPLE_RATE !== undefined ? Number(process.env.EVAL_SAMPLE_RATE) : 0.1;
@@ -251,35 +282,7 @@ async function handleChatStream(req, res, surface) {
         traceId: trace.id,
       });
       res.end();
-
-      setImmediate(async function () {
-        try {
-          await db.saveMessage(businessId, sessionId, 'visitor', message, { channel: surface });
-          await db.saveMessage(businessId, sessionId, 'assistant', result.response, {
-            confidence: result.confidence,
-            escalated:  result.escalated,
-            source:     result.source,
-            channel:    surface,
-          });
-
-          if (surface === 'widget' && !result.escalated && result.chunks.length > 0 && Math.random() < EVAL_SAMPLE_RATE) {
-            var contents = result.chunks.map(function (c) { return c.content; });
-            var scores = await evaluateAnswer({ query: message, answer: result.response, chunks: contents });
-            await db.insertEvalLog({
-              business_id: businessId, session_id: sessionId,
-              query: message, answer: result.response,
-              retrieved_chunks: JSON.stringify(result.chunks),
-              faithfulness_score: scores.faithfulness,
-              answer_relevance_score: scores.answer_relevance,
-              context_precision_score: scores.context_precision,
-              overall_score: (scores.faithfulness !== null && scores.answer_relevance !== null) ? (scores.faithfulness + scores.answer_relevance + (scores.context_precision || 0)) / 3 : null,
-              flagged_hallucination: scores.has_hallucination,
-            });
-          }
-        } catch (asyncErr) {
-          console.error('Chat side-effects failed:', asyncErr.message);
-        }
-      });
+      recordExchange(businessId, sessionId, surface, message, result);
       return result;
     } catch (err) {
       traces.recordError(err);
@@ -288,6 +291,37 @@ async function handleChatStream(req, res, surface) {
       send({ done: true, error: 'Unable to answer. Please try again.', escalated: false, source: 'error', sessionId: sessionId, citations: [], traceId: trace.id });
       res.end();
       return { source: 'error' };
+    }
+  });
+}
+
+function recordExchange(businessId, sessionId, surface, message, result) {
+  setImmediate(async function () {
+    try {
+      await db.saveMessage(businessId, sessionId, 'visitor', message, { channel: surface });
+      await db.saveMessage(businessId, sessionId, 'assistant', result.response, {
+        confidence: result.confidence,
+        escalated:  result.escalated,
+        source:     result.source,
+        channel:    surface,
+      });
+
+      if (surface === 'widget' && !result.escalated && result.chunks.length > 0 && Math.random() < EVAL_SAMPLE_RATE) {
+        var contents = result.chunks.map(function (c) { return c.content; });
+        var scores = await evaluateAnswer({ query: message, answer: result.response, chunks: contents });
+        await db.insertEvalLog({
+          business_id: businessId, session_id: sessionId,
+          query: message, answer: result.response,
+          retrieved_chunks: JSON.stringify(result.chunks),
+          faithfulness_score: scores.faithfulness,
+          answer_relevance_score: scores.answer_relevance,
+          context_precision_score: scores.context_precision,
+          overall_score: (scores.faithfulness !== null && scores.answer_relevance !== null) ? (scores.faithfulness + scores.answer_relevance + (scores.context_precision || 0)) / 3 : null,
+          flagged_hallucination: scores.has_hallucination,
+        });
+      }
+    } catch (asyncErr) {
+      console.error('Chat side-effects failed:', asyncErr.message);
     }
   });
 }

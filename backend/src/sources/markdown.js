@@ -12,7 +12,7 @@ function parse({ text, filename }) {
   const flush = () => {
     const content = buffer.join('\n').trim();
     if (content.length > 0) {
-      sections.push({ heading: currentHeading || label, content, url: 'md:' + label });
+      sections.push({ heading: currentHeading || label, content, url: label });
     }
     buffer = [];
   };
@@ -29,7 +29,7 @@ function parse({ text, filename }) {
   flush();
 
   if (sections.length === 0) {
-    sections.push({ heading: label, content: text.trim(), url: 'md:' + label });
+    sections.push({ heading: label, content: text.trim(), url: label });
   }
   return sections;
 }

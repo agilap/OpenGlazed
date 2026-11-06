@@ -418,7 +418,7 @@ async function storeLevel0Chunks(chunks, businessId, sourceRef = null) {
   return { added: inserted.length, unchanged: 0, removed: 0 };
 }
 
-async function ingestNormalized(sections, { businessId, sourceType, sourceRef }) {
+async function ingestNormalized(sections, { businessId, sourceType, sourceRef, skipSummaries = false }) {
   try {
     await updateClientStatus(businessId, 'ingesting');
     await updateIngestProgress(businessId, 10);
@@ -437,12 +437,12 @@ async function ingestNormalized(sections, { businessId, sourceType, sourceRef })
     const stored = await storeLevel0Chunks(level0Chunks, businessId, sourceRef);
     await updateIngestProgress(businessId, 55);
 
-    const allChunks = await getAllChunks(businessId);
-    const level1Rows = await buildLevel1Summaries(allChunks, businessId);
-    await updateIngestProgress(businessId, 70);
-
-    const level2Summary = await buildLevel2Summary(level1Rows, businessId);
-    await extractAndSaveBusinessProfile(level2Summary, businessId);
+    try {
+      if (!skipSummaries) await rebuildSummaries(businessId);
+    } catch (error) {
+      console.warn('[ingest] summary layer skipped:', error.message);
+    }
+    await updateIngestProgress(businessId, 90);
 
     await updateClientStatus(businessId, 'active');
     await updateIngestProgress(businessId, 100);
@@ -451,6 +451,18 @@ async function ingestNormalized(sections, { businessId, sourceType, sourceRef })
     await updateClientStatus(businessId, 'error');
     throw error;
   }
+}
+
+async function rebuildSummaries(businessId) {
+  const allChunks = await getAllChunks(businessId);
+  if (!allChunks.length) {
+    await deleteSummaries(businessId, 1);
+    await deleteSummaries(businessId, 2);
+    return;
+  }
+  const level1Rows = await buildLevel1Summaries(allChunks, businessId);
+  const level2Summary = await buildLevel2Summary(level1Rows, businessId);
+  await extractAndSaveBusinessProfile(level2Summary, businessId);
 }
 
 function dot(a, b) {
@@ -751,4 +763,4 @@ async function runIngest(businessId, url) {
   }
 }
 
-module.exports = { runIngest, ingestNormalized, storeLevel0Chunks, buildSemanticChunks, extractCleanPageText };
+module.exports = { runIngest, ingestNormalized, rebuildSummaries, storeLevel0Chunks, buildSemanticChunks, extractCleanPageText };

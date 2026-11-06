@@ -1,10 +1,10 @@
 # OpenGlazed
 
-> **JTBD:** Give any business a website chat assistant they can **self-host and fully own** — running on their own models and data, with no API-key lock-in, no per-token bill, and no third party sitting between them and their customers.
+> **JTBD:** Give any team a document assistant they can **self-host and fully own**: upload PDFs, Word files and notes, and get cited answers from them, running on their own models and data, with no API-key lock-in, no per-token bill, and no third party sitting between them and their customers.
 
 OpenGlazed is an **open-source, self-hosted RAG agent**. Your data and conversations live in your own Postgres + pgvector; the model is **bring-your-own** — any OpenAI-compatible API (OpenAI, OpenRouter, Groq, Gemini, Anthropic, or a self-hosted vLLM/Ollama server), set by three env vars.
 
-One agent, two surfaces: a **website widget** for customers and an internal **team chat** for staff. Both remember conversations across reloads.
+One agent, two surfaces: a shareable **chat widget** and an internal **team chat** for staff. Both remember conversations across reloads.
 
 A **hybrid retrieval pipeline** (dense + lexical + RAPTOR + rerank) — not a single vector lookup — grounds answers in your content, and every answer surfaces its citations so you can verify it.
 
@@ -124,11 +124,11 @@ Keep the embedding model and dimension consistent with existing data. The existi
 
 ## Product flow
 
-1. Add business name + URL on frontend `/`
-2. Backend scrapes and chunks the page content
-3. Business content chunks are stored in the local Postgres + pgvector database for retrieval context
-4. You receive iframe embed code and URL
-5. Site visitor opens widget and chats; the conversation persists across reloads
+1. Sign up, name a workspace on `/`, and upload PDF, DOCX, Markdown, TXT, CSV or JSON files, or paste text
+2. Each document is parsed (PDFs page by page), chunked and embedded; the list shows its status
+3. Chunks are stored in the local Postgres + pgvector database for retrieval context
+4. You receive the embed snippet
+5. Anyone with the widget asks questions; conversations persist across reloads
 6. The agent searches the knowledge base (dense + BM25 + RAPTOR) as needed, answers with citations, captures leads, or escalates
 7. Business sees recent conversations and captured leads on `/dashboard/:id`, and asks its own questions in team chat at `/team/:id`
 
@@ -241,7 +241,7 @@ The launcher is dependency-free (about 5 KB unminified). The widget preserves pa
 ## Notes
 
 - Re-ingest is incremental: changed/added chunks are embedded; unchanged hashes retain their embeddings.
-- English FTS, approximate chunk/token budgets, synthetic evaluation coverage, and model citation compliance remain limitations. JSON/PDF/DOCX source parser stubs and the existing sitemap ingestion limitations were audited but not expanded in this change.
+- English FTS, approximate chunk/token budgets, synthetic evaluation coverage, and model citation compliance remain limitations. Scanned PDFs without a text layer are rejected (no OCR). Uploads are limited to 18 MB per file, and documents are processed one at a time per workspace by an in-process queue, so run a single API instance.
 - Existing sampled answer judging uses `EVAL_SAMPLE_RATE` (default 0.1); set `0` to disable those extra model calls. The repeatable eval harness is separate and offline by default.
 
 ## Accounts and local database

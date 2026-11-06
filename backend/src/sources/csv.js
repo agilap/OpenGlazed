@@ -13,7 +13,7 @@ function parse({ text, filename }) {
     const content = header
       .map((h, idx) => `${h}: ${cells[idx] || ''}`.trim())
       .join('\n');
-    sections.push({ heading: `${filename || 'row'} #${i}`, content, url: 'csv:' + (filename || 'data') });
+    sections.push({ heading: `${filename || 'row'} #${i}`, content, url: filename || 'data.csv' });
   }
   return sections;
 }

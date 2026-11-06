@@ -170,24 +170,63 @@ async function getTopQuestions(businessId, days = 7) {
 }
 
 async function getDashboardStats(businessId) {
-  const [leads, sessions, esc, asst, total] = await Promise.all([
+  const [docs, convo, leads, latency] = await Promise.all([
+    pool.query("SELECT COUNT(*) FILTER (WHERE status = 'ready')::int AS c FROM documents WHERE business_id = $1", [businessId]),
+    pool.query(`SELECT COUNT(*) FILTER (WHERE role = 'assistant')::int AS answered,
+                       COUNT(DISTINCT session_id)::int AS conversations,
+                       COUNT(DISTINCT session_id) FILTER (WHERE role = 'assistant' AND (escalated OR confidence = 'low'))::int AS unanswered
+                FROM messages WHERE business_id = $1 AND channel IN ('widget', 'team') AND session_id IS NOT NULL`, [businessId]),
     pool.query('SELECT COUNT(*)::int AS c FROM leads WHERE business_id = $1', [businessId]),
-    pool.query("SELECT COUNT(DISTINCT session_id)::int AS c FROM messages WHERE business_id = $1 AND channel = 'widget' AND session_id IS NOT NULL", [businessId]),
-    pool.query("SELECT COUNT(*)::int AS c FROM messages WHERE business_id = $1 AND channel = 'widget' AND role = 'assistant' AND escalated = true", [businessId]),
-    pool.query("SELECT COUNT(*)::int AS c FROM messages WHERE business_id = $1 AND channel = 'widget' AND role = 'assistant'", [businessId]),
-    pool.query("SELECT COUNT(*)::int AS c FROM messages WHERE business_id = $1 AND channel = 'widget'", [businessId]),
+    pool.query('SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms) AS p50 FROM request_traces WHERE business_id = $1', [businessId]),
   ]);
+  const { answered, conversations, unanswered } = convo.rows[0];
+  const p50 = latency.rows[0].p50;
+  return {
+    documents: docs.rows[0].c,
+    questionsAnswered: answered,
+    conversations,
+    unansweredRate: conversations > 0 ? unanswered / conversations : null,
+    medianLatencyMs: p50 === null ? null : Math.round(Number(p50)),
+    totalLeads: leads.rows[0].c,
+  };
+}
 
-  const totalLeads = leads.rows[0].c;
-  const distinctSessionCount = sessions.rows[0].c;
-  const escalatedCount = esc.rows[0].c;
-  const assistantTotalCount = asst.rows[0].c;
-  const totalMessages = total.rows[0].c;
+async function createDocument(businessId, filename, sourceType) {
+  const { rows } = await pool.query(
+    'INSERT INTO documents (business_id, filename, source_type) VALUES ($1, $2, $3) RETURNING *',
+    [businessId, filename, sourceType]
+  );
+  return rows[0];
+}
 
-  const escalationRate = assistantTotalCount > 0 ? escalatedCount / assistantTotalCount : 0;
-  const avgMessagesPerSession = distinctSessionCount > 0 ? totalMessages / distinctSessionCount : 0;
+async function updateDocument(id, { status, chunkCount = null, error = null }) {
+  await pool.query(
+    'UPDATE documents SET status = $2, chunk_count = COALESCE($3, chunk_count), error = $4 WHERE id = $1',
+    [id, status, chunkCount, error]
+  );
+}
 
-  return { totalLeads, totalConversations: distinctSessionCount, escalationRate, avgMessagesPerSession };
+async function listDocuments(businessId) {
+  const { rows } = await pool.query(
+    'SELECT id, filename, source_type, status, chunk_count, error, created_at FROM documents WHERE business_id = $1 ORDER BY id DESC',
+    [businessId]
+  );
+  return rows;
+}
+
+async function getDocument(businessId, id) {
+  const { rows } = await pool.query('SELECT * FROM documents WHERE id = $1 AND business_id = $2', [id, businessId]);
+  return rows[0] || null;
+}
+
+async function deleteDocument(businessId, id) {
+  await pool.query('DELETE FROM chunks WHERE business_id = $1 AND source_ref = $2', [businessId, 'doc:' + id]);
+  await pool.query('DELETE FROM documents WHERE id = $1 AND business_id = $2', [id, businessId]);
+}
+
+async function countChunksBySource(businessId, sourceRef) {
+  const { rows } = await pool.query('SELECT COUNT(*)::int AS c FROM chunks WHERE business_id = $1 AND source_ref = $2 AND level = 0', [businessId, sourceRef]);
+  return rows[0].c;
 }
 
 async function insertBusiness(name, url) {
@@ -401,6 +440,12 @@ module.exports = {
     return new Map(rows.map((r) => [String(r.id), parse(r.embedding)]));
   },
   ensureSchema,
+  createDocument,
+  updateDocument,
+  listDocuments,
+  getDocument,
+  deleteDocument,
+  countChunksBySource,
   ensureTraceSchema,
   saveRequestTrace,
   pruneRequestTraces,
@@ -410,6 +455,18 @@ module.exports = {
 
 async function ensureSchema(dim = 1536) {
   await ensureTraceSchema();
+  await pool.query(`CREATE TABLE IF NOT EXISTS documents (
+  id           BIGSERIAL PRIMARY KEY,
+  business_id  BIGINT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  filename     TEXT NOT NULL,
+  source_type  TEXT NOT NULL,
+  status       TEXT NOT NULL DEFAULT 'queued',
+  chunk_count  INTEGER NOT NULL DEFAULT 0,
+  error        TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_documents_business ON documents(business_id, id DESC);
+`);
   const DIM = Number(dim) || 1536;
   const current = await pool.query(
     "SELECT atttypmod AS m FROM pg_attribute WHERE attrelid = 'chunks'::regclass AND attname = 'embedding'"

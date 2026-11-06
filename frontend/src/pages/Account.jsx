@@ -51,7 +51,7 @@ export default function Account({ mode }) {
         <div className="account-intro">
           <p className="account-eyebrow">{signup ? 'GET STARTED' : 'WELCOME BACK'}</p>
           <h1>{signup ? 'Create your workspace' : 'Sign in to your workspace'}</h1>
-          <p>{signup ? 'One account holds every assistant you index, with its leads, conversations and traces.' : 'Manage your assistants, read conversations and check what the agent retrieved.'}</p>
+          <p>{signup ? 'One account holds every document workspace, with its conversations, contacts and traces.' : 'Manage your documents, read conversations and check what the agent retrieved.'}</p>
         </div>
         <div className="account-panel">
           <p className="account-meta">// {signup ? 'new account' : 'session'}</p>
@@ -69,14 +69,14 @@ export default function Account({ mode }) {
         </div>
       </section> : <section className="account-workspace">
         <div className="account-workspace-heading">
-          <div><p className="account-eyebrow">WORKSPACE</p><h1>Your assistants</h1><p>{account?.user.email}</p></div>
+          <div><p className="account-eyebrow">WORKSPACE</p><h1>Your workspaces</h1><p>{account?.user.email}</p></div>
           <div className="account-actions">
-            <Link className="account-primary" to="/#start">Index a website</Link>
+            <Link className="account-primary" to="/#start">New workspace</Link>
             <button className="account-secondary" onClick={logout} type="button">Sign out</button>
           </div>
         </div>
         {error && <p className="account-error" role="alert">{error}</p>}
-        {loading ? <p>Loading your workspace…</p> : account?.businesses.length ? <div className="account-list">{account.businesses.map((business) => <Link key={business.id} to={`/dashboard/${business.id}`}><span><strong>{business.name}</strong><small>{business.url}</small></span><span className="account-status">{business.ingest_status || 'pending'} →</span></Link>)}</div> : <div className="account-empty"><h2>No assistants yet</h2><p>Index your website to create your first assistant.</p></div>}
+        {loading ? <p>Loading your workspace…</p> : account?.businesses.length ? <div className="account-list">{account.businesses.map((business) => <Link key={business.id} to={`/dashboard/${business.id}`}><span><strong>{business.name}</strong>{business.url ? <small>{business.url}</small> : null}</span><span className="account-status">{business.ingest_status || 'pending'} →</span></Link>)}</div> : <div className="account-empty"><h2>No workspaces yet</h2><p>Create a workspace and upload documents to get your first assistant.</p></div>}
       </section>}
     </div>
   </main>;

@@ -227,6 +227,18 @@ CREATE INDEX IF NOT EXISTS idx_request_traces_business_created
   ON request_traces(business_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_request_traces_created ON request_traces(created_at);
 
+CREATE TABLE IF NOT EXISTS documents (
+  id           BIGSERIAL PRIMARY KEY,
+  business_id  BIGINT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  filename     TEXT NOT NULL,
+  source_type  TEXT NOT NULL,
+  status       TEXT NOT NULL DEFAULT 'queued',
+  chunk_count  INTEGER NOT NULL DEFAULT 0,
+  error        TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_documents_business ON documents(business_id, id DESC);
+
 CREATE TABLE IF NOT EXISTS users (
   id             BIGSERIAL PRIMARY KEY,
   email          TEXT NOT NULL UNIQUE,

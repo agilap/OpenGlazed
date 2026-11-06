@@ -1,59 +1,22 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import confetti from 'canvas-confetti';
+import DocumentLibrary from '../components/DocumentLibrary';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 
-function validateBusinessUrl(value) {
-  const trimmed = (value || '').trim();
-
-  if (!/^https?:\/\//i.test(trimmed)) {
-    return 'URL must start with http:// or https://';
-  }
-
-  let parsed;
-  try {
-    parsed = new URL(trimmed);
-  } catch (_error) {
-    return 'Please enter a valid URL';
-  }
-
-  const host = (parsed.hostname || '').toLowerCase();
-  if (host === 'localhost' || host === '127.0.0.1') {
-    return 'Localhost URLs are not allowed';
-  }
-
-  if (/^(\d{1,3}\.){3}\d{1,3}/.test(host)) {
-    return 'IP address URLs are not allowed';
-  }
-
-  return null;
-}
-
-function getProgressLabel(progress) {
-  if (progress <= 10) return 'Scraping pages...';
-  if (progress <= 25) return 'Chunking content...';
-  if (progress <= 55) return 'Building knowledge tree...';
-  if (progress <= 80) return 'Generating embeddings...';
-  if (progress < 100) return 'Almost ready...';
-  return 'Ready!';
-}
-
 export default function Onboarding() {
   const [name, setName] = useState('');
-  const [url, setUrl] = useState('');
   const [status, setStatus] = useState('');
-  const [urlError, setUrlError] = useState('');
-  const [copyLabel, setCopyLabel] = useState('Copy Embed Code');
-  const [ingestErrorMessage, setIngestErrorMessage] = useState('Ingest failed. Please try again.');
-  const [ingest, setIngest] = useState({ status: '', ingest_progress: 0 });
-  const [result, setResult] = useState(null);
+  const [copyLabel, setCopyLabel] = useState('Copy embed code');
+  const [businessId, setBusinessId] = useState(null);
+  const [documents, setDocuments] = useState([]);
+  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [adminToken, setAdminToken] = useState(() => localStorage.getItem('glazed_admin_token') || '');
   const [needToken, setNeedToken] = useState(false);
   const [tokenRejected, setTokenRejected] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
-  const pollCountRef = useRef(0);
   const celebratedRef = useRef(false);
   const navigate = useNavigate();
 
@@ -61,204 +24,56 @@ export default function Onboarding() {
     fetch(`${API_BASE}/api/auth/me`, { credentials: 'include' }).then((r) => setSignedIn(r.ok)).catch(() => {});
   }, []);
 
-  const businessId = result?.businessId || null;
-  const showProgress = Boolean(businessId);
-  const progressValue = Math.max(0, Math.min(100, ingest.ingest_progress || 0));
-  const progressLabel = useMemo(() => getProgressLabel(progressValue), [progressValue]);
-  const embedSnippet = businessId
-    ? `<script src="/widget.js" data-business-id="${businessId}"></script>`
-    : '';
+  const ready = documents.some((doc) => doc.status === 'ready');
+  const settled = documents.length > 0 && documents.every((doc) => doc.status === 'ready' || doc.status === 'error');
+  const embedSnippet = businessId ? `<script src="/widget.js" data-business-id="${businessId}"></script>` : '';
 
   useEffect(() => {
-    if (!businessId) {
-      return undefined;
-    }
-
-    let active = true;
-    let intervalId;
-    pollCountRef.current = 0;
-
-    const poll = async () => {
-      if (!active) {
-        return;
-      }
-
-      pollCountRef.current += 1;
-      if (pollCountRef.current >= 60) {
-        setIngest({ status: 'error', ingest_progress: 0 });
-        setStatus('error');
-        setIngestErrorMessage('Ingest is taking too long. Please try again.');
-        if (intervalId) {
-          clearInterval(intervalId);
-        }
-        return;
-      }
-
-      try {
-        const response = await fetch(`${API_BASE}/api/ingest/${businessId}/status`);
-        const data = await response.json();
-        if (!response.ok || !active) {
-          setIngest({ status: 'error', ingest_progress: 0 });
-          setStatus('error');
-          setIngestErrorMessage('Ingest failed. Please try again.');
-          if (intervalId) {
-            clearInterval(intervalId);
-          }
-          return;
-        }
-
-        const nextStatus = data.status || '';
-        const nextProgress = Number(data.ingest_progress) || 0;
-
-        setIngest({
-          status: nextStatus,
-          ingest_progress: nextProgress,
-        });
-
-        if (nextStatus === 'error') {
-          setStatus('error');
-          setIngestErrorMessage('Ingest failed. Please try again.');
-          if (intervalId) {
-            clearInterval(intervalId);
-          }
-          return;
-        }
-
-        if (nextStatus === 'active') {
-          setStatus('Ready');
-          if (intervalId) {
-            clearInterval(intervalId);
-          }
-        }
-      } catch (_error) {
-        if (active) {
-          setIngest({ status: 'error', ingest_progress: 0 });
-          setStatus('error');
-          setIngestErrorMessage('Ingest failed. Please try again.');
-          if (intervalId) {
-            clearInterval(intervalId);
-          }
-        }
-      }
-    };
-
-    poll();
-    intervalId = setInterval(poll, 3000);
-
-    return () => {
-      active = false;
-      if (intervalId) {
-        clearInterval(intervalId);
-      }
-    };
-  }, [businessId]);
-
-  useEffect(() => {
-    if (ingest.status === 'active') {
-      setStatus('Ready');
-    } else if (ingest.status === 'error') {
-      setStatus('Error');
-    }
-  }, [ingest.status]);
-
-  useEffect(() => {
-    if (ingest.status !== 'active' || celebratedRef.current) {
-      return;
-    }
-
+    if (!ready || celebratedRef.current) return;
     celebratedRef.current = true;
-    confetti({
-      particleCount: 80,
-      spread: 70,
-      colors: ['#c0c1ff', '#8083ff', '#494bd6', '#ffffff'],
-    });
-  }, [ingest.status]);
-
-  function resetToForm() {
-    setResult(null);
-    setStatus('');
-    setLoading(false);
-    setIngestErrorMessage('Ingest failed. Please try again.');
-    setIngest({ status: '', ingest_progress: 0 });
-    setUrlError('');
-    setCopyLabel('Copy Embed Code');
-    pollCountRef.current = 0;
-    celebratedRef.current = false;
-  }
+    confetti({ particleCount: 80, spread: 70, colors: ['#c0c1ff', '#8083ff', '#494bd6', '#ffffff'] });
+  }, [ready]);
 
   async function handleCopy() {
-    if (!embedSnippet) {
-      return;
-    }
-
     try {
       await navigator.clipboard.writeText(embedSnippet);
       setCopyLabel('Copied!');
-      setTimeout(() => setCopyLabel('Copy Embed Code'), 2000);
+      setTimeout(() => setCopyLabel('Copy embed code'), 2000);
     } catch (_error) {
-      setCopyLabel('Copy Embed Code');
+      setCopyLabel('Copy embed code');
     }
   }
 
-  async function handleSubmit(e) {
-    e.preventDefault();
-
-    const validationError = validateBusinessUrl(url);
-    if (validationError) {
-      setUrlError(validationError);
-      return;
-    }
-
-    setUrlError('');
-    setStatus('Processing...');
-    setResult(null);
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setError('');
+    setStatus('Creating…');
     setLoading(true);
-    setIngestErrorMessage('Ingest failed. Please try again.');
-    setIngest({ status: '', ingest_progress: 0 });
-    pollCountRef.current = 0;
-
     try {
       const response = await fetch(`${API_BASE}/api/businesses`, {
         method: 'POST',
         credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
-        },
-        body: JSON.stringify({ name, url }),
+        headers: { 'Content-Type': 'application/json', ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}) },
+        body: JSON.stringify({ name }),
       });
-
       if (response.status === 401) {
         setStatus('');
         setTokenRejected(Boolean(adminToken));
         setNeedToken(true);
         return;
       }
-
       const data = await response.json();
-
       if (!response.ok) {
-        setStatus('Error');
-        setResult(data);
+        setStatus('');
+        setError(data.error || 'Could not create the workspace.');
         return;
       }
-
       if (adminToken) localStorage.setItem('glazed_admin_token', adminToken);
-      setStatus('Processing...');
-      setResult({
-        businessId: data.businessId,
-        embedIframe: data.embedIframe,
-        embedUrl: `/embed/${data.businessId}`,
-        embedScript: data.embedScript,
-        dashboard: `/dashboard/${data.businessId}`,
-      });
-      setIngest({
-        status: data.status || 'ingesting',
-        ingest_progress: 0,
-      });
+      setStatus('');
+      setBusinessId(data.businessId);
     } catch (err) {
-      setStatus('Network error');
-      setResult({ error: err.message });
+      setStatus('');
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -337,12 +152,12 @@ export default function Onboarding() {
         self-hosted <span aria-hidden="true">/</span> <span style={{"color": "#121218"}}>your data</span>
       </p>
       <h1 style={{"margin": "0", "textAlign": "center", "fontSize": "clamp(44px, 6vw, 80px)", "lineHeight": "1.04", "letterSpacing": "-0.045em", "fontWeight": "500"}}>
-        Your website's agent,<br /><span style={{"color": "#494bd6"}}>on your own stack</span>
+        Your documents' agent,<br /><span style={{"color": "#494bd6"}}>on your own stack</span>
       </h1>
       <p style={{"margin": "24px 0 28px", "maxWidth": "600px", "textAlign": "center", "fontSize": "18px", "lineHeight": "1.5", "color": "#5c5c68"}}>
-        Point it at a URL. Get a chat assistant that answers from your content, cites its sources, and runs on your models and your Postgres.
+        Upload your PDFs, Word files and notes. Get an assistant that answers from them, cites the page it used, and runs on your models and your Postgres.
       </p>
-      <a href="#start" style={{"display": "inline-flex", "alignItems": "center", "height": "46px", "padding": "0 20px", "marginBottom": "40px", "background": "#121218", "color": "#fff", "borderRadius": "6px", "fontSize": "14px", "fontWeight": "600"}}>Index your site</a>
+      <a href="#start" style={{"display": "inline-flex", "alignItems": "center", "height": "46px", "padding": "0 20px", "marginBottom": "40px", "background": "#121218", "color": "#fff", "borderRadius": "6px", "fontSize": "14px", "fontWeight": "600"}}>Upload documents</a>
 
       <div style={{"width": "100%"}}>
         <RetrievalTrace />
@@ -353,53 +168,41 @@ export default function Onboarding() {
       <div style={{"flex": "1 1 320px", "maxWidth": "440px"}}>
         <p style={{"margin": "0 0 16px", "fontFamily": "'JetBrains Mono', monospace", "fontSize": "11px", "letterSpacing": "0.08em", "color": "#5c5c68"}}>GET STARTED</p>
         <h2 style={{"margin": "0 0 16px", "fontSize": "clamp(32px, 4vw, 44px)", "fontWeight": "500", "letterSpacing": "-0.035em", "lineHeight": "1.1"}}>Fill the layers with your content</h2>
-        <p style={{"margin": "0", "fontSize": "16px", "lineHeight": "1.55", "color": "#5c5c68"}}>Give it a name and a URL. Ingest builds every layer below the agent, and progress shows here as it runs.</p>
+        <p style={{"margin": "0", "fontSize": "16px", "lineHeight": "1.55", "color": "#5c5c68"}}>Name a workspace and drop in your documents. Each file is parsed, chunked and embedded, and you can watch every one finish here.</p>
       </div>
 
-        {!showProgress ? (
+        {!businessId ? (
           <form className="ob2-card ob2-form" onSubmit={handleSubmit}>
-            <p className="ob2-meta">// configure source</p>
-            <h2>Index your site</h2>
-            <label htmlFor="business-name">Business name</label>
-            <input id="business-name" placeholder="Acme Inc." value={name} onChange={(e) => setName(e.target.value)} required />
-            <label htmlFor="business-url">Website URL</label>
-            <input id="business-url" className="ob2-url" placeholder="https://example.com" value={url}
-              onChange={(e) => { setUrl(e.target.value); if (urlError) setUrlError(''); }}
-              aria-invalid={Boolean(urlError)} aria-describedby={urlError ? 'business-url-error' : undefined} required />
-            {urlError && <p id="business-url-error" className="ob2-error" role="alert">{urlError}</p>}
+            <p className="ob2-meta">// new workspace</p>
+            <h2>Name your workspace</h2>
+            <label htmlFor="business-name">Workspace name</label>
+            <input id="business-name" placeholder="Acme policies" value={name} onChange={(e) => setName(e.target.value)} maxLength={120} required />
             {needToken && (
               <>
                 <label htmlFor="admin-token">ADMIN_TOKEN</label>
                 <input id="admin-token" className="ob2-url" type="password" autoComplete="off" value={adminToken}
                   onChange={(e) => { setAdminToken(e.target.value.trim()); setTokenRejected(false); }}
                   aria-invalid={tokenRejected} aria-describedby="admin-token-note" required />
-                <p id="admin-token-note" className="ob2-note" style={{ margin: '0 0 16px' }}><a href="/login">Sign in</a> or <a href="/signup">create an account</a> to index a site. Admins can paste the ADMIN_TOKEN from backend/.env instead.</p>
+                <p id="admin-token-note" className="ob2-note" style={{ margin: '0 0 16px' }}><a href="/login">Sign in</a> or <a href="/signup">create an account</a> to create a workspace. Admins can paste the ADMIN_TOKEN from backend/.env instead.</p>
                 {tokenRejected && <p className="ob2-error" role="alert">That token was rejected.</p>}
               </>
             )}
-            <button className="ob2-submit" type="submit" disabled={loading}>{loading ? 'Creating...' : 'Start scraping'}</button>
-            <p className="ob2-note">Scrapes, chunks and embeds your pages, then hands you an embed snippet.</p>
+            <button className="ob2-submit" type="submit" disabled={loading}>{loading ? 'Creating…' : 'Continue'}</button>
+            <p className="ob2-note">Next you'll add the documents your assistant answers from.</p>
             {status && <p className="ob2-meta" role="status">{status}</p>}
-            {result?.error && <p className="ob2-error" role="alert">{result.error}</p>}
+            {error && <p className="ob2-error" role="alert">{error}</p>}
           </form>
         ) : (
-          <div className="ob2-card ob2-progress" aria-live="polite">
-            <p className="ob2-meta ob2-status"><span className="ob2-dot" aria-hidden="true" style={{ background: ingest.status === 'error' ? '#f87171' : ingest.status === 'active' ? '#34d399' : '#fbbf24' }} />ingest / {ingest.status === 'error' ? 'error' : ingest.status === 'active' ? 'ready' : 'running'}</p>
-            <h2>{ingest.status === 'active' ? 'Indexing complete' : ingest.status === 'error' ? ingestErrorMessage : progressLabel}</h2>
-            {ingest.status !== 'error' && ingest.status !== 'active' && <>
-              <div className="ob2-progress-track" role="progressbar" aria-label="Ingest progress" aria-valuenow={progressValue} aria-valuemin={0} aria-valuemax={100}>
-                <div style={{ width: `${progressValue}%`, height: '100%', background: '#c0c1ff' }} />
-              </div>
-              <p className="ob2-meta">{progressValue}% complete</p>
-            </>}
-            {ingest.status === 'error' && <button className="ob2-secondary" type="button" onClick={resetToForm}>Try again</button>}
-            {ingest.status === 'active' && <>
+          <div className="ob2-card ob2-progress">
+            <p className="ob2-meta ob2-status"><span className="ob2-dot" aria-hidden="true" style={{ background: ready ? '#34d399' : documents.length ? '#fbbf24' : '#8a8a96' }} />{name} / {ready ? (settled ? 'ready' : 'indexing') : documents.length ? 'indexing' : 'empty'}</p>
+            <h2>{ready && settled ? 'Your documents are ready' : 'Add your documents'}</h2>
+            <DocumentLibrary businessId={businessId} adminToken={adminToken} tone="dark" onDocuments={setDocuments} onUnauthorized={() => setNeedToken(true)} />
+            {ready && <>
               <div className="ob2-embed-row"><span>Embed snippet</span><button className="ob2-copy" type="button" onClick={handleCopy}>{copyLabel}</button></div>
               <pre className="ob2-code">{embedSnippet}</pre>
-              <button className="ob2-submit" type="button" onClick={() => navigate(`/dashboard/${result.businessId}`)}>Open dashboard</button>
-              <a className="ob2-test" href={`/embed/${businessId}`} target="_blank" rel="noopener noreferrer">Test your chatbot →</a>
+              <button className="ob2-submit" type="button" onClick={() => navigate(`/dashboard/${businessId}`)}>Open dashboard</button>
+              <a className="ob2-test" href={`/embed/${businessId}`} target="_blank" rel="noopener noreferrer">Ask your documents →</a>
             </>}
-            {result?.error && <p className="ob2-error" role="alert">{result.error}</p>}
           </div>
         )}
     </section>
@@ -418,7 +221,7 @@ export default function Onboarding() {
 
       <section className="ob2-tick" style={{"borderTop": "1px solid #2a2a33", "padding": "72px 32px"}}>
         <h2 style={{"margin": "0 0 20px", "fontSize": "clamp(36px, 4vw, 52px)", "fontWeight": "500", "letterSpacing": "-0.035em", "lineHeight": "1.1"}}>One agent, two surfaces</h2>
-        <p style={{"margin": "0", "maxWidth": "480px", "fontSize": "18px", "lineHeight": "1.5", "color": "#a1a1aa"}}>A website widget for customers and an internal team chat for staff. Both remember conversations across reloads.</p>
+        <p style={{"margin": "0", "maxWidth": "480px", "fontSize": "18px", "lineHeight": "1.5", "color": "#a1a1aa"}}>A shareable chat for anyone who needs answers, and an internal team chat for staff. Both remember conversations across reloads.</p>
       </section>
 
       <div className="ob2-tick" style={{"borderTop": "1px solid #2a2a33", "display": "flex", "flexWrap": "wrap"}}>
@@ -468,7 +271,7 @@ export default function Onboarding() {
           <article id="widget" style={{"borderTop": "1px solid #2a2a33", "display": "grid", "gridTemplateColumns": "repeat(auto-fit, minmax(min(100%, 380px), 1fr))", "gap": "32px", "padding": "40px 32px"}}>
             <div>
               <p style={{"margin": "0 0 16px", "fontFamily": "'JetBrains Mono', monospace", "fontSize": "11px", "letterSpacing": "0.08em", "color": "#8a8a96"}}>WIDGET</p>
-              <h3 style={{"margin": "0 0 16px", "maxWidth": "380px", "fontSize": "28px", "fontWeight": "500", "letterSpacing": "-0.02em", "lineHeight": "1.2"}}>One script tag on your site</h3>
+              <h3 style={{"margin": "0 0 16px", "maxWidth": "380px", "fontSize": "28px", "fontWeight": "500", "letterSpacing": "-0.02em", "lineHeight": "1.2"}}>Share it with one script tag</h3>
               <p style={{"margin": "0", "maxWidth": "400px", "fontSize": "15px", "lineHeight": "1.55", "color": "#a1a1aa"}}>The widget shows the sources it used, so every answer can be checked. A visitor's chat comes back on reload.</p>
             </div>
             <div style={{"background": "#15151b", "border": "1px solid #2a2a33", "borderRadius": "8px", "padding": "24px", "fontFamily": "'JetBrains Mono', monospace", "fontSize": "13px", "lineHeight": "1.7", "overflowX": "auto"}}>
@@ -514,7 +317,7 @@ export default function Onboarding() {
       <h2 style={{"margin": "0 0 20px", "maxWidth": "800px", "fontSize": "clamp(32px, 4vw, 52px)", "fontWeight": "500", "letterSpacing": "-0.035em", "lineHeight": "1.1"}}>Own the assistant, the models and the data</h2>
       <p style={{"margin": "0 0 32px", "maxWidth": "520px", "fontSize": "18px", "lineHeight": "1.5", "color": "#5c5c68"}}>No API-key lock-in, and no third party between you and your customers.</p>
       <div style={{"display": "flex", "flexWrap": "wrap", "justifyContent": "center", "gap": "12px"}}>
-        <a href="#start" style={{"display": "inline-flex", "alignItems": "center", "height": "46px", "padding": "0 20px", "background": "#121218", "color": "#fff", "borderRadius": "6px", "fontSize": "14px", "fontWeight": "600"}}>Index your site</a>
+        <a href="#start" style={{"display": "inline-flex", "alignItems": "center", "height": "46px", "padding": "0 20px", "background": "#121218", "color": "#fff", "borderRadius": "6px", "fontSize": "14px", "fontWeight": "600"}}>Upload documents</a>
         <a href="https://github.com/agilap/OpenGlazed" style={{"display": "inline-flex", "alignItems": "center", "height": "46px", "padding": "0 20px", "border": "1px solid #d3d3dc", "borderRadius": "6px", "fontSize": "14px", "fontWeight": "600"}}>View on GitHub</a>
       </div>
     </section>
@@ -567,7 +370,7 @@ function RetrievalTrace() {
   const step = Math.min(tick, 4);
   const sizes = [48, 24, 12, 5];
   const columns = [
-    { name: 'CHUNKS + RAPTOR', detail: 'your pages and their summaries' },
+    { name: 'CHUNKS + RAPTOR', detail: 'your documents and their summaries' },
     { name: 'DENSE + BM25', detail: 'pgvector + postgres fts' },
     { name: 'RRF', detail: 'rank fusion, k=60' },
     { name: 'RERANK', detail: 'local cosine, top 5' },
@@ -589,8 +392,8 @@ function RetrievalTrace() {
   return (
 <div className="ob2-trace" style={{"boxSizing": "border-box", "width": "100%", "maxWidth": "1180px", "margin": "0 auto", "background": "#121218", "color": "#f4f4f5", "border": "1px solid #2a2a33", "borderRadius": "12px", "fontFamily": "'JetBrains Mono', monospace", "textAlign": "left"}}>
   <div style={{"display": "flex", "flexWrap": "wrap", "alignItems": "center", "justifyContent": "space-between", "gap": "8px 24px", "padding": "16px 24px", "borderBottom": "1px solid #2a2a33", "fontSize": "13px"}}>
-    <span><span style={{"color": "#8a8a96"}}>query&gt;</span> What are your opening hours?</span>
-    <span style={{"fontSize": "12px", "color": "#8a8a96"}}>example trace, acme.com</span>
+    <span><span style={{"color": "#8a8a96"}}>query&gt;</span> How many days do customers have to request a refund?</span>
+    <span style={{"fontSize": "12px", "color": "#8a8a96"}}>example trace, acme policies</span>
   </div>
 
   <div style={{"display": "flex", "flexWrap": "wrap", "gap": "24px", "padding": "24px"}}>
@@ -610,10 +413,10 @@ function RetrievalTrace() {
       <p style={{"margin": "0 0 4px", "fontSize": "11px", "letterSpacing": "0.08em", "color": agentLabel, "transition": "color 400ms"}}>AGENT</p>
       <p style={{"margin": "0 0 16px", "minHeight": "32px", "fontSize": "12px", "lineHeight": "16px", "color": "#8a8a96"}}>answers from what it found, with sources</p>
       {answered && (<>
-        <p style={{"margin": "0 0 12px", "fontFamily": "Inter, sans-serif", "fontSize": "15px", "lineHeight": "1.5"}}>We're open 9 to 5, Monday to Friday.</p>
+        <p style={{"margin": "0 0 12px", "fontFamily": "Inter, sans-serif", "fontSize": "15px", "lineHeight": "1.5"}}>Customers can request a refund within 30 days of purchase, with the original receipt.</p>
         <div style={{"display": "flex", "flexWrap": "wrap", "gap": "6px", "fontSize": "12px", "color": "#c0c1ff"}}>
-          <span style={{"border": "1px solid #33333e", "borderRadius": "4px", "padding": "3px 7px"}}>acme.com/contact</span>
-          <span style={{"border": "1px solid #33333e", "borderRadius": "4px", "padding": "3px 7px"}}>acme.com/faq</span>
+          <span style={{"border": "1px solid #33333e", "borderRadius": "4px", "padding": "3px 7px"}}>refund-policy.pdf p.2</span>
+          <span style={{"border": "1px solid #33333e", "borderRadius": "4px", "padding": "3px 7px"}}>support-handbook.docx</span>
         </div>
       </>)}
       {!answered && (<>
