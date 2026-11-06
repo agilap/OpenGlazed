@@ -54,7 +54,8 @@ const SURFACE_TOOLS = {
 function systemPrompt(surface, business) {
   const name = business.name || 'the business';
   const guardrails = [
-    `You only help with questions about ${name} and its documents${business.scope ? ': ' + business.scope : ''}.`,
+    `You only help with questions about ${name} and the topics in ${name}'s documents${business.scope ? ': ' + business.scope : ''}.`,
+    `Questions about ${name} itself, or anyone or anything its documents mention, are on-topic. When unsure, search first and decide from the results.`,
     `For greetings, thanks, and goodbyes, give a brief friendly reply plus one line on what you can help with, without refusal wording.`,
     `If a request is unrelated, including general knowledge, coding, writing tasks, other companies or personal advice, say briefly that you can only help with questions about ${name} and suggest what you can help with. Do not answer it.`,
     "If the documents don't cover an on-topic question, say so plainly and never guess.",
@@ -242,7 +243,7 @@ async function runAgent({ businessId, business, surface = 'widget', sessionId, h
       let first = true;
       const { content, toolCalls } = await chat(messages, {
         tools,
-        toolChoice: last ? 'none' : undefined,
+        toolChoice: last ? 'none' : step === 0 && tools.some((t) => t.function.name === 'search_knowledge') ? { type: 'function', function: { name: 'search_knowledge' } } : undefined,
         onToken: (t) => { emit(first ? sep + t : t); first = false; },
       });
 
