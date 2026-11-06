@@ -36,15 +36,16 @@ test('citation URLs and theme input reject executable or CSS payloads', async ()
   assert.equal(colorText('#000000'), '#ffffff');
 });
 
-for (const [primaryColor, foreground] of [['#ffffff', '#121218'], ['#000000', '#ffffff']]) {
+for (const [primaryColor, foreground, greeting] of [['#ffffff', '#121218', '<script>test</script>'], ['#000000', '#ffffff', undefined]]) {
 test(`legacy async script keeps readable ${primaryColor} theme, reduced motion and scoped close messages`, () => {
   const handlers = {};
   const elements = [];
   const node = () => ({ style: {}, attrs: {}, children: [], events: {}, setAttribute(key, value) { this.attrs[key] = value; }, appendChild(child) { this.children.push(child); }, addEventListener(key, fn) { this.events[key] = fn; }, focus() { this.focused = true; } });
   const document = {
-    currentScript: { src: 'https://bot.test/widget.js', dataset: { businessId: '42', primaryColor, greeting: '<script>test</script>' } },
+    currentScript: { src: 'https://bot.test/widget.js', dataset: { businessId: '42', primaryColor, ...(greeting === undefined ? {} : { greeting }) } },
     readyState: 'loading', body: node(), createElement() { const el = node(); elements.push(el); return el; },
     addEventListener(key, fn) { handlers[key] = fn; },
+    querySelector(selector) { return selector === '[data-glazed-widget]' ? this.body.children.find((child) => 'data-glazed-widget' in child.attrs) || null : null; },
   };
   const window = { location: { href: 'https://customer.test/' }, innerWidth: 375, matchMedia: () => ({ matches: true }), addEventListener(key, fn) { handlers[key] = fn; } };
   vm.runInNewContext(fs.readFileSync(path.resolve(__dirname, '../public/widget.js'), 'utf8'), { document, window, URL });
@@ -54,7 +55,8 @@ test(`legacy async script keeps readable ${primaryColor} theme, reduced motion a
   assert.equal(button.style.color, foreground);
   assert.equal(new URL(iframe.src).searchParams.get('color'), primaryColor);
   assert.equal(new URL(iframe.src).origin, 'https://bot.test');
-  assert.equal(new URL(iframe.src).searchParams.get('greeting'), '<script>test</script>');
+  assert.equal(new URL(iframe.src).searchParams.has('greeting'), greeting !== undefined);
+  if (greeting !== undefined) assert.equal(new URL(iframe.src).searchParams.get('greeting'), greeting);
   button.events.click();
   assert.equal(button.attrs['aria-expanded'], 'true');
   assert.equal(close.style.display, 'block');
@@ -65,5 +67,12 @@ test(`legacy async script keeps readable ${primaryColor} theme, reduced motion a
   assert.equal(button.attrs['aria-expanded'], 'false');
   assert.equal(button.focused, true);
   assert.equal(root.children.length, 3);
+  assert.equal(root.attrs['data-glazed-widget'], '');
+  const created = elements.length;
+  document.currentScript = { src: 'https://bot.test/widget.js', dataset: { businessId: '42' } };
+  document.readyState = 'complete';
+  vm.runInNewContext(fs.readFileSync(path.resolve(__dirname, '../public/widget.js'), 'utf8'), { document, window, URL });
+  assert.equal(elements.length, created);
+  assert.equal(document.body.children.length, 1);
 });
 }

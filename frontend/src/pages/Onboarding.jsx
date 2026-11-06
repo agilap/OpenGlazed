@@ -24,6 +24,23 @@ export default function Onboarding() {
     fetch(`${API_BASE}/api/auth/me`, { credentials: 'include' }).then((r) => setSignedIn(r.ok)).catch(() => {});
   }, []);
 
+  useEffect(() => {
+    const workspaceId = import.meta.env.VITE_LANDING_WORKSPACE_ID;
+    if (!workspaceId) return undefined;
+    const script = document.createElement('script');
+    script.src = `${API_BASE}/widget.js`;
+    script.async = true;
+    script.dataset.businessId = workspaceId;
+    script.dataset.appUrl = window.location.origin;
+    script.dataset.primaryColor = '#494bd6';
+    script.dataset.greeting = 'Hi! Ask me anything about Glazed AI: how it works, what it reads, or how to self-host it.';
+    document.body.appendChild(script);
+    return () => {
+      script.remove();
+      document.querySelectorAll('[data-glazed-widget]').forEach((node) => node.remove());
+    };
+  }, []);
+
   const ready = documents.some((doc) => doc.status === 'ready');
   const settled = documents.length > 0 && documents.every((doc) => doc.status === 'ready' || doc.status === 'error');
   const embedSnippet = businessId ? `<script src="/widget.js" data-business-id="${businessId}"></script>` : '';

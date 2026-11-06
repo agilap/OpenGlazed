@@ -4,21 +4,22 @@
   var scriptUrl = script && script.src;
   function initWidget() {
     var businessId = dataset.businessId;
-    if (!businessId) return;
+    if (!businessId || document.querySelector('[data-glazed-widget]')) return;
     var primaryColor = /^#[0-9a-f]{6}$/i.test(dataset.primaryColor || '') ? dataset.primaryColor : '#6366f1';
     var position = dataset.position === 'left' ? 'left' : 'right';
-    var greeting = (dataset.greeting || 'Hi! How can I help today?').slice(0, 300);
     var embedUrl;
     try {
       embedUrl = new URL('/embed/' + encodeURIComponent(businessId), dataset.appUrl || scriptUrl || window.location.href);
       if (!/^https?:$/.test(embedUrl.protocol)) return;
     } catch (_) { return; }
     embedUrl.searchParams.set('color', primaryColor);
-    embedUrl.searchParams.set('greeting', greeting);
+    if (dataset.greeting !== undefined) embedUrl.searchParams.set('greeting', dataset.greeting.slice(0, 300));
     embedUrl.searchParams.set('theme', dataset.theme === 'dark' ? 'dark' : 'light');
+    embedUrl.searchParams.set('mode', 'widget');
     var reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     var isOpen = false;
     var root = document.createElement('div');
+    root.setAttribute('data-glazed-widget', '');
     root.style.cssText = 'position:fixed;z-index:2147483000;pointer-events:none;bottom:0;left:0;right:0';
     var button = document.createElement('button');
     button.type = 'button';
