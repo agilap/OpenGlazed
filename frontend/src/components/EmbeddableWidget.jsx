@@ -40,6 +40,7 @@ export default function EmbeddableWidget({ businessId, config = {} }) {
   const [sessionId, setSessionId] = useState('');
   const [leadCaptured, setLeadCaptured] = useState(false);
   const [gateSkipped, setGateSkipped] = useState(false);
+  const [gateExpanded, setGateExpanded] = useState(() => !window.matchMedia('(max-height: 650px)').matches);
   const [escalationEmail, setEscalationEmail] = useState('');
   const [escalationSubmitted, setEscalationSubmitted] = useState(false);
   const [message, setMessage] = useState('');
@@ -139,7 +140,7 @@ export default function EmbeddableWidget({ businessId, config = {} }) {
           {
             role: 'assistant',
             isGreeting: true,
-            content: config.greeting || `Hi there. I'm ${businessName}'s AI assistant. Ask me anything about our products, pricing, or services.`,
+            content: config.greeting || `Hi! I answer questions from ${businessName}'s documents. What would you like to know?`,
             time: new Date(),
             source: 'greeting',
           },
@@ -159,10 +160,8 @@ export default function EmbeddableWidget({ businessId, config = {} }) {
   }, [messages, isTyping]);
 
   useEffect(() => {
-    if (!shouldShowGate) {
-      inputRef.current?.focus();
-    }
-  }, [shouldShowGate]);
+    inputRef.current?.focus();
+  }, []);
 
   async function startChat(event) {
     event.preventDefault();
@@ -356,16 +355,16 @@ export default function EmbeddableWidget({ businessId, config = {} }) {
         .gzd-escalation-row { display: flex; gap: 8px; }
         .gzd-escalation-input { flex: 1; width: 0; }
         .gzd-escalation-send { padding: 0 14px; background: var(--gzd-accent); color: var(--gzd-accent-text); border: 0; border-radius: 6px; font-weight: 600; }
-        .gzd-gate { flex-shrink: 0; max-height: calc(100% - 78px); overflow-y: auto; padding: 20px; border-top: 1px solid #e4e4ea; display: flex; flex-direction: column; gap: 6px; }
-        .gzd-gate h2 { margin: 0; font-size: 18px; font-weight: 500; letter-spacing: -0.01em; }
-        .gzd-gate p { margin: 0 0 10px; font-size: 13px; line-height: 1.45; color: #5c5c68; }
-        .gzd-gate label { font-size: 13px; color: #5c5c68; }
-        .gzd-gate input { flex-shrink: 0; width: 100%; margin-bottom: 8px; }
-        .gzd-gate input[type='email'] { margin-bottom: 12px; }
-        .gzd-gate button { flex-shrink: 0; }
+        .gzd-gate { flex-shrink: 0; max-height: 40%; overflow-y: auto; margin: 0 16px 8px; padding: 12px; border: 1px solid #e4e4ea; border-radius: 8px; display: flex; flex-direction: column; gap: 8px; }
+        .gzd-gate h2 { margin: 0; font-size: 14px; font-weight: 600; }
+        .gzd-gate p { margin: 0; font-size: 13px; line-height: 1.4; color: #5c5c68; }
+        .gzd-gate-fields, .gzd-gate-actions { display: flex; gap: 8px; }
+        .gzd-gate-fields input { flex: 1; width: 0; }
+        .gzd-gate-actions button { flex: 1; }
         .gzd-gate button[type='submit'] { background: var(--gzd-accent); color: var(--gzd-accent-text); border: 0; border-radius: 6px; font-weight: 600; }
-        .gzd-gate-skip { background: transparent; color: #5c5c68; border: 0; font-size: 13px; }
-        .gzd-widget-root .gzd-gate-skip:hover { background: #f4f4f5; }
+        .gzd-gate-skip, .gzd-gate-toggle { background: transparent; color: #5c5c68; border: 1px solid #c8c8d2; border-radius: 6px; }
+        .gzd-widget-root :is(.gzd-gate-skip,.gzd-gate-toggle):hover { background: #f4f4f5; }
+        .gzd-gate-toggle { flex-shrink: 0; margin: 0 16px 8px; padding: 0 12px; text-align: left; }
         .gzd-input-bar { flex-shrink: 0; padding: 12px 16px; padding-bottom: max(12px, env(safe-area-inset-bottom)); border-top: 1px solid #e4e4ea; display: flex; gap: 8px; }
         .gzd-input { flex: 1; width: 0; }
         .gzd-send { flex: 0 0 44px; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; background: var(--gzd-accent); color: var(--gzd-accent-text); border: 0; border-radius: 6px; }
@@ -383,7 +382,7 @@ export default function EmbeddableWidget({ businessId, config = {} }) {
         .gzd-widget-root[data-theme='dark'] .gzd-citation-src { color: #a5b4fc; }
         .gzd-retry { margin: 0 16px 12px; min-height: 44px; }
         .gzd-status { padding: 0 20px 8px; font-size: 12px; }
-        @media (max-width: 400px) { .gzd-messages,.gzd-gate { padding: 16px; } .gzd-widget-root input { font-size: 16px; } }
+        @media (max-width: 400px) { .gzd-messages { padding: 16px; } .gzd-widget-root input { font-size: 16px; } }
         @keyframes gzd-blink { 50% { opacity: 0; } }
         @keyframes gzd-typing-dots { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-4px); } }
         @keyframes gzd-message-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
@@ -444,31 +443,23 @@ export default function EmbeddableWidget({ businessId, config = {} }) {
       </section>
 
       <div className="gzd-status" role="status" aria-live="polite">{isTyping ? 'Assistant is responding…' : messages.at(-1)?.role === 'assistant' && !messages.at(-1)?.isGreeting ? 'Response ready.' : ''}</div>
-      {shouldShowGate ? (
+      {shouldShowGate && (gateExpanded ? (
         <form className="gzd-gate" onSubmit={startChat}>
-          <h2>Before we start</h2>
-          <p>Leave your details so we can follow up if needed.</p>
-          <label htmlFor="gzd-name">Name (optional)</label>
-          <input
-            id="gzd-name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-          <label htmlFor="gzd-email">Email</label>
-          <input
-            id="gzd-email"
-            type="email"
-            placeholder="you@example.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-          <button type="submit">Start chatting</button>
-          <button className="gzd-gate-skip" type="button" onClick={skipLeadCapture}>Skip for now</button>
+          <h2>Want a follow-up?</h2>
+          <p>Leave your email and we&apos;ll get back to you.</p>
+          <div className="gzd-gate-fields">
+            <input aria-label="Name (optional)" placeholder="Name (optional)" value={name} onChange={(e) => setName(e.target.value)} />
+            <input aria-label="Email" type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+          </div>
+          <div className="gzd-gate-actions">
+            <button type="submit">Send</button>
+            <button className="gzd-gate-skip" type="button" onClick={skipLeadCapture}>Not now</button>
+          </div>
           {error && <p className="gzd-error" role="alert">{error}</p>}
         </form>
       ) : (
-        <>
+        <button className="gzd-gate-toggle" type="button" onClick={() => setGateExpanded(true)}>Want a follow-up? Leave your email</button>
+      ))}
           <form className="gzd-input-bar" onSubmit={sendMessage}>
             <input
               ref={inputRef}
@@ -487,10 +478,8 @@ export default function EmbeddableWidget({ businessId, config = {} }) {
             </button>
           </form>
           <div className="gzd-powered">Powered by Glazed</div>
-          {error && <p className="gzd-error" role="alert">{error}</p>}
+          {error && !shouldShowGate && <p className="gzd-error" role="alert">{error}</p>}
           {retryMessage && <button className="gzd-retry" type="button" disabled={isTyping} onClick={() => sendMessage(null, retryMessage)}>Retry message</button>}
-        </>
-      )}
     </div>
   );
 }

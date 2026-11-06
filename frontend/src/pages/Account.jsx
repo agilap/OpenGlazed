@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import '../styles/account.css';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 
@@ -41,11 +42,11 @@ export default function Account({ mode }) {
     } catch (err) { setError(err.message); }
   }
   const signup = mode === 'signup';
-  return <main className="account-page">
+  return <main className="account-page" id="content">
     <div className="account-frame">
       <header className="account-header">
         <Link to="/" className="account-brand">Glazed AI</Link>
-        <Link to="/">Back to home</Link>
+        {mode ? <Link to="/">Back to home</Link> : <button className="account-secondary" onClick={logout} type="button"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true"><path d="M10 17v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v2M14 7l5 5-5 5M19 12H8" /></svg>Sign out</button>}
       </header>
       {mode ? <section className="account-auth">
         <div className="account-intro">
@@ -60,23 +61,23 @@ export default function Account({ mode }) {
             <label htmlFor="account-email">Email</label>
             <input id="account-email" type="email" autoComplete="email" placeholder="you@company.com" value={email} onChange={(e) => setEmail(e.target.value)} required />
             <label htmlFor="account-password">Password</label>
-            <input id="account-password" type="password" autoComplete={signup ? 'new-password' : 'current-password'} minLength={signup ? 12 : undefined} maxLength={1024} value={password} onChange={(e) => setPassword(e.target.value)} aria-describedby={signup ? 'account-password-hint' : undefined} required />
+            <input id="account-password" type="password" autoComplete={signup ? 'new-password' : 'current-password'} minLength={signup ? 12 : undefined} maxLength={1024} value={password} onChange={(e) => setPassword(e.target.value)} aria-invalid={!!error} aria-describedby={[signup && 'account-password-hint', error && 'account-auth-error'].filter(Boolean).join(' ') || undefined} required />
             {signup && <small id="account-password-hint">Use at least 12 characters.</small>}
-            {error && <p className="account-error" role="alert">{error}</p>}
-            <button type="submit" disabled={loading}>{loading ? 'Please wait…' : signup ? 'Create account' : 'Sign in'}</button>
+            {error && <p id="account-auth-error" className="account-error" role="alert">{error}</p>}
+            <button type="submit" disabled={loading}>{loading && <svg className="account-spinner" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true"><circle cx="12" cy="12" r="9" opacity=".3" /><path d="M12 3a9 9 0 0 1 9 9" /></svg>}{loading ? 'Please wait…' : signup ? 'Create account' : 'Sign in'}</button>
           </form>
           <p className="account-switch">{signup ? 'Already have an account?' : 'New to Glazed AI?'} <Link to={signup ? '/login' : '/signup'}>{signup ? 'Sign in' : 'Create an account'}</Link></p>
         </div>
       </section> : <section className="account-workspace">
-        <div className="account-workspace-heading">
-          <div><p className="account-eyebrow">WORKSPACE</p><h1>Your workspaces</h1><p>{account?.user.email}</p></div>
-          <div className="account-actions">
-            <Link className="account-primary" to="/#start">New workspace</Link>
-            <button className="account-secondary" onClick={logout} type="button">Sign out</button>
-          </div>
-        </div>
-        {error && <p className="account-error" role="alert">{error}</p>}
-        {loading ? <p>Loading your workspace…</p> : account?.businesses.length ? <div className="account-list">{account.businesses.map((business) => <Link key={business.id} to={`/dashboard/${business.id}`}><span><strong>{business.name}</strong>{business.url ? <small>{business.url}</small> : null}</span><span className="account-status">{business.ingest_status || 'pending'} →</span></Link>)}</div> : <div className="account-empty"><h2>No workspaces yet</h2><p>Create a workspace and upload documents to get your first assistant.</p></div>}
+        <div className="account-workspace-heading"><div><p className="account-eyebrow">WORKSPACE</p><h1>Your workspaces</h1><p>{account?.user.email}</p></div></div>
+        {error && <p className="account-error account-error-light" role="alert">{error}</p>}
+        {loading ? <div className="account-grid" role="status" aria-label="Loading workspaces"><div className="account-skeleton" /><div className="account-skeleton" /></div> : <div className="account-grid">
+          {account?.businesses.map((business) => {
+            const date = business.created_at && new Date(business.created_at);
+            return <Link className="account-card" key={business.id} to={`/dashboard/${business.id}/overview`}><strong>{business.name}</strong><span className="account-status"><span className={`account-status-dot account-status-dot--${business.ingest_status || 'pending'}`} />{business.ingest_status || 'pending'}</span>{date && !Number.isNaN(date.getTime()) && <small>Created {date.toLocaleDateString()}</small>}</Link>;
+          })}
+          <Link className="account-card account-card-new" to="/#start"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>New workspace</Link>
+        </div>}
       </section>}
     </div>
   </main>;
