@@ -226,3 +226,18 @@ CREATE TABLE IF NOT EXISTS request_traces (
 CREATE INDEX IF NOT EXISTS idx_request_traces_business_created
   ON request_traces(business_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_request_traces_created ON request_traces(created_at);
+
+CREATE TABLE IF NOT EXISTS users (
+  id             BIGSERIAL PRIMARY KEY,
+  email          TEXT NOT NULL UNIQUE,
+  password_hash  TEXT NOT NULL,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS user_sessions (
+  token_hash  TEXT PRIMARY KEY,
+  user_id     BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at  TIMESTAMPTZ NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS owner_id BIGINT REFERENCES users(id);
+CREATE INDEX IF NOT EXISTS idx_businesses_owner ON businesses(owner_id);

@@ -36,7 +36,7 @@ async function getClient(businessId) {
   }
 
   businessCache.set(businessId, rows[0]);
-  setTimeout(() => businessCache.delete(businessId), 5 * 60 * 1000);
+  setTimeout(() => businessCache.delete(businessId), 5 * 60 * 1000).unref();
   return rows[0];
 }
 

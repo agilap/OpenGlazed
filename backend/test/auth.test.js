@@ -3,6 +3,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 
+process.env.LLM_BASE_URL = 'http://127.0.0.1:1/v1';
+process.env.EMBED_BASE_URL = 'http://127.0.0.1:1/v1';
+
 test('accounts isolate businesses, persist sessions, and revoke logout', { skip: !process.env.AUTH_TEST_DATABASE_URL }, async () => {
   process.env.DATABASE_URL = process.env.AUTH_TEST_DATABASE_URL;
   process.env.ADMIN_TOKEN = 'auth-test-admin';

@@ -1,6 +1,8 @@
 'use strict';
 
 process.env.ADMIN_TOKEN = 'trace-route-test';
+process.env.LLM_BASE_URL = 'http://127.0.0.1:1/v1';
+process.env.EMBED_BASE_URL = 'http://127.0.0.1:1/v1';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const app = require('../src/server');
