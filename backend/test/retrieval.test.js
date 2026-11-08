@@ -23,8 +23,6 @@ function cosineSim(a, b) {
 test('ensureSchema is idempotent for the current dim', async () => {
   if (!process.env.DATABASE_URL) return;
   await assert.doesNotReject(db.ensureSchema(DIM));
-  const ok = await db.getAllChunks.length;
-  assert.strictEqual(typeof ok, 'number');
 });
 
 test('getEmbeddingsForIds returns parsed arrays, keyed for retriever lookups', async () => {
@@ -37,7 +35,7 @@ test('getEmbeddingsForIds returns parsed arrays, keyed for retriever lookups', a
     { business_id: bid, chunk_text: 'C car', source_url: 'u', source_ref: 't', chunk_index: 2, level: 0, token_count: 2, embedding: mkVec(1000) },
   ]);
 
-  const chunks = await db.getAllChunks(bid);
+  const chunks = (await db.query('SELECT id, chunk_text AS content FROM chunks WHERE business_id = $1', [bid])).rows;
   const ids = chunks.map((c) => c.id);
   const embMap = await db.getEmbeddingsForIds(ids);
 
@@ -54,7 +52,7 @@ test('getEmbeddingsForIds returns parsed arrays, keyed for retriever lookups', a
   assert.strictEqual(topChunk.content, 'B banana', 'rerank should surface the query-aligned chunk');
   assert.strictEqual(scored[0].sim, 1, 'cosine sim to the aligned chunk should be 1.0');
 
-  await db.deleteChunksByBusiness(bid);
+  await db.query('DELETE FROM chunks WHERE business_id = $1', [bid]);
 });
 
 test('getEmbeddingsForIds handles empty input without error', async () => {

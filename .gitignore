@@ -74,3 +74,6 @@ dist/
 # Local agent configuration
 /.agents/
 /.claude/
+
+# Timestamped eval runs (named reports like before.json/after.json stay tracked)
+backend/eval/reports/[0-9]*.json

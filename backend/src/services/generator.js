@@ -3,14 +3,6 @@
 const { chatComplete, streamChat } = require('./llm');
 const { recordContext, recordError } = require('./traces');
 
-function stripMarkdownFences(text) {
-  return (text || '')
-    .replace(/^```json\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/\s*```\s*$/i, '')
-    .trim();
-}
-
 function buildHistory(conversationHistory, businessName) {
   if (!Array.isArray(conversationHistory) || conversationHistory.length === 0) {
     return '';
@@ -24,11 +16,7 @@ function buildHistory(conversationHistory, businessName) {
     .join('\n');
 }
 
-async function callLLM(prompt) {
-  return chatComplete(prompt);
-}
-
-function buildAnswerPrompt({ query, contextChunks, businessName, brandTone, conversationHistory, keyCta, raptorSummary }) {
+function buildAnswerPrompt({ query, contextChunks, businessName, brandTone, conversationHistory, keyCta }) {
   const safeBusinessName = businessName || 'Our team';
   const safeBrandTone = brandTone || 'professional';
   const safeKeyCta = keyCta || 'Contact our team to get started.';
@@ -51,7 +39,6 @@ function buildAnswerPrompt({ query, contextChunks, businessName, brandTone, conv
     '8. If you cannot answer from context at all → respond with exactly:',
     '   [ESCALATE]: <one sentence on what is missing>',
     '',
-    raptorSummary ? `BUSINESS OVERVIEW:\n${raptorSummary}\n` : '',
     'CONTEXT CHUNKS:',
     safeContextChunks.map((chunk, index) => typeof chunk === 'string'
       ? `[${index + 1}] ${chunk}`
@@ -66,13 +53,13 @@ function buildAnswerPrompt({ query, contextChunks, businessName, brandTone, conv
 }
 
 async function streamAnswer(
-  { query, contextChunks, businessName, brandTone, conversationHistory, keyCta, raptorSummary },
-  { onToken } = {}
+  { query, contextChunks, businessName, brandTone, conversationHistory, keyCta },
+  { onToken, signal } = {}
 ) {
   const safeContextChunks = Array.isArray(contextChunks) ? contextChunks : [];
-  const prompt = buildAnswerPrompt({ query, contextChunks, businessName, brandTone, conversationHistory, keyCta, raptorSummary });
+  const prompt = buildAnswerPrompt({ query, contextChunks, businessName, brandTone, conversationHistory, keyCta });
 
-  recordContext({ chunks: safeContextChunks, overview: raptorSummary || null });
+  recordContext({ chunks: safeContextChunks });
   let accumulated = '';
   let emitted = false;
   let prefix = '';
@@ -92,7 +79,7 @@ async function streamAnswer(
   };
 
   try {
-    accumulated = await streamChat(prompt, { onToken: flush });
+    accumulated = await streamChat(prompt, { onToken: flush, signal });
   } catch (_err) {
     recordError(_err, 'generation');
     if (emitted) throw _err;
@@ -121,7 +108,7 @@ async function generateEscalationMessage({ query, missingInfo, businessName, bra
   ].join('\n');
 
   try {
-    const response = await callLLM(prompt);
+    const response = await chatComplete(prompt);
     return {
       response,
       escalated: true,
@@ -145,47 +132,10 @@ async function generateQueryRewrite(rawQuery) {
   ].join('\n');
 
   try {
-    const rewritten = await callLLM(prompt);
+    const rewritten = await chatComplete(prompt);
     return rewritten || rawQuery;
   } catch (_error) {
     return rawQuery;
-  }
-}
-
-async function evaluateAnswer({ query, answer, chunks }) {
-  const prompt = [
-    'Evaluate this RAG answer and return ONLY valid JSON:',
-    '{',
-    '  "faithfulness": float 0-1,',
-    '  "answer_relevance": float 0-1,',
-    '  "context_precision": float 0-1,',
-    '  "has_hallucination": boolean,',
-    '  "reason": "one sentence"',
-    '}',
-    `QUERY: ${query}`,
-    `ANSWER: ${answer}`,
-    `CHUNKS: ${(chunks || []).join('\n---\n')}`,
-  ].join('\n');
-
-  try {
-    const raw = await callLLM(prompt);
-    const jsonText = stripMarkdownFences(raw);
-    const parsed = JSON.parse(jsonText);
-
-    return {
-      faithfulness: Number.isFinite(parsed.faithfulness) && parsed.faithfulness >= 0 && parsed.faithfulness <= 1 ? parsed.faithfulness : null,
-      answer_relevance: Number.isFinite(parsed.answer_relevance) && parsed.answer_relevance >= 0 && parsed.answer_relevance <= 1 ? parsed.answer_relevance : null,
-      context_precision: Number.isFinite(parsed.context_precision) && parsed.context_precision >= 0 && parsed.context_precision <= 1 ? parsed.context_precision : null,
-      has_hallucination: typeof parsed.has_hallucination === 'boolean' ? parsed.has_hallucination : null,
-      reason: typeof parsed.reason === 'string' ? parsed.reason : null,
-    };
-  } catch (_error) {
-    return {
-      faithfulness: null,
-      answer_relevance: null,
-      context_precision: null,
-      has_hallucination: null,
-    };
   }
 }
 
@@ -193,6 +143,5 @@ module.exports = {
   streamAnswer,
   generateEscalationMessage,
   generateQueryRewrite,
-  evaluateAnswer,
   buildAnswerPrompt,
 };

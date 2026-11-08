@@ -15,11 +15,11 @@ No Postgres, embedding endpoint, chat model, or API key is used by the default r
 A version 1 JSON object contains `name`, positive integer `k`, and `cases`. Each case contains:
 
 - `id`, `query`, optional `businessId` (default 1).
-- `dense`: ordered leaf rows returned by dense retrieval; `summaries`: ordered rows returned by summary retrieval, filtered by requested level.
-- `lexical`: ordered full-text rows, optional `lexicalFallback` for the plain-text fallback.
-- Rows use `id`, `content`, `level`, `source_url`, `similarity`. String bigint IDs match node-postgres behavior. Independent chunk and summary IDs can overlap.
+- `dense`: ordered leaf rows returned by dense retrieval.
+- `lexical`: ordered full-text rows.
+- Rows use `id`, `content`, `level`, `source_url`, `similarity`. String bigint IDs match node-postgres behavior.
 - `queryEmbedding` (default `[1,0]`), optional `embeddings` keyed by chunk ID, and optional `embeddingError: true` to test lexical-only fallback. Small synthetic vectors deliberately avoid a dependency on any embedding provider.
-- `relevance`: graded judgments keyed by `level:id`, e.g. `{ "0:123": 3, "2:123": 1 }`. Missing IDs have grade 0; positive grades are relevant.
+- `relevance`: graded judgments keyed by `level:id`, e.g. `{ "0:123": 3 }`. Missing IDs have grade 0; positive grades are relevant.
 - Optional `answer`: a **saved answer** with `claims` (`text`, `supportedBy` document keys) and `citations` (`claim` zero-based index, `document` key). Human reviewers assign supporting document keys; use an empty list for unsupported claims. These are fixed answer annotations, not generated answers.
 
 At k, hit rate is the fraction of questions with any relevant result; recall is relevant unique IDs retrieved / all positive judgments; MRR uses the first relevant rank; nDCG uses graded gain `2^grade - 1` with log2 discount. Duplicate IDs receive no second credit. Dataset aggregate metrics are unweighted per-question means. Empty-relevance questions score 0 and should normally live in a separate abstention dataset.

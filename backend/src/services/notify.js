@@ -16,29 +16,22 @@ function sendMail(message) {
   return transport.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, ...message });
 }
 
+const logFailure = (error) => console.error(JSON.stringify({ event: 'notify.failed', error: error.message }));
+
+// shortcut: at-most-once; a crash between claim and send drops the email, add a retry job if alerts become critical.
 async function notifyUnanswered({ business, item }) {
   if (!process.env.SMTP_HOST || !business.notify_email || !business.notify_on_unanswered) return;
-  let client;
+  const claimed = await db.query('UPDATE inbox_items SET notified_at = now() WHERE id = $1 AND business_id = $2 AND notified_at IS NULL RETURNING id', [item.id, business.id]).catch(logFailure);
+  if (!claimed || !claimed.rowCount) return;
   try {
-    client = await db.pool.connect();
-    await client.query('BEGIN');
-    const result = await client.query('SELECT notified_at FROM inbox_items WHERE id = $1 AND business_id = $2 FOR UPDATE', [item.id, business.id]);
-    if (!result.rowCount || result.rows[0].notified_at) {
-      await client.query('COMMIT');
-      return;
-    }
     await sendMail({
       to: business.notify_email,
       subject: `Unanswered question in ${business.name}`,
       text: `Question: ${item.question}\n\nAssistant reply: ${item.answer || ''}\n\nChannel: ${item.channel}\nTime: ${new Date(item.created_at).toISOString()}\n\n${appUrl()}/dashboard/${business.id}/inbox`,
     });
-    await client.query('UPDATE inbox_items SET notified_at = now() WHERE id = $1 AND business_id = $2', [item.id, business.id]);
-    await client.query('COMMIT');
   } catch (error) {
-    if (client) await client.query('ROLLBACK').catch(() => {});
-    console.error(JSON.stringify({ event: 'notify.failed', error: error.message }));
-  } finally {
-    if (client) client.release();
+    logFailure(error);
+    await db.query('UPDATE inbox_items SET notified_at = NULL WHERE id = $1 AND business_id = $2', [item.id, business.id]).catch(() => {});
   }
 }
 

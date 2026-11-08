@@ -6,11 +6,11 @@ OpenGlazed is an **open-source, self-hosted RAG agent**. Your data and conversat
 
 One agent, two surfaces: a shareable **chat widget** and an internal **team chat** for staff. Both remember conversations across reloads.
 
-A **hybrid retrieval pipeline** (dense + lexical + RAPTOR + rerank) — not a single vector lookup — grounds answers in your content, and every answer surfaces its citations so you can verify it.
+A **hybrid retrieval pipeline** (dense + lexical + rerank) — not a single vector lookup — grounds answers in your content, and every answer surfaces its citations so you can verify it.
 
 - Document upload (PDF, DOCX, Markdown, TXT, CSV, JSON) → bounded semantic chunking → local Postgres + pgvector
 - Embeddable chat widget (React + iframe) that shows the sources it used
-- **Hybrid retrieval**: dense (pgvector) + lexical (Postgres FTS / `ts_rank_cd`) fused with Reciprocal Rank Fusion (RRF=60), optional overview summaries, and bounded context. No extra services; legacy cosine reranking is opt-in
+- **Hybrid retrieval**: dense (pgvector) + lexical (Postgres FTS / `ts_rank_cd`) fused with Reciprocal Rank Fusion (RRF=60) and bounded context. No extra services; legacy cosine reranking is opt-in
 - **Tool-calling agent**: the model decides when to search the knowledge base, capture a lead, or escalate to a human (falls back to plain RAG on providers without tool calling)
 - **Persistent conversations**: history is stored server-side; the widget restores a visitor's chat on reload, and the dashboard lists recent conversations
 - **Team chat** (`/team/:id`): staff ask the same agent about the business *and* customer activity (recent conversations, leads)
@@ -29,7 +29,7 @@ A **hybrid retrieval pipeline** (dense + lexical + RAPTOR + rerank) — not a si
 ## Project structure
 
 - `backend/` Express API, document ingestion pipeline, chunk store, chat APIs
-- `backend/src/services/embeddings.js` OpenAI embedding helper
+- `backend/src/services/llm.js` model and embedding helpers
 - `docker-compose.yml` + `db/init.sql` — local Postgres + pgvector, auto-creates the schema
 - `frontend/` React SPA (onboarding + dashboard)
 
@@ -129,7 +129,7 @@ plain retrieve-then-answer path automatically.
 | Anthropic | `https://api.anthropic.com/v1` | set `EMBED_*` |
 | Ollama | `http://localhost:11434/v1` | same provider (`nomic-embed-text`) |
 
-To switch providers, change the env vars and restart. At startup the backend asks the embedding model for one vector to learn its dimension, so `EMBED_DIM` is only needed to override that. If the dimension changed, the vector columns are migrated and every stored chunk and summary is re-embedded from its saved text in the background; no re-upload is needed. Answers from search are degraded until that finishes.
+To switch providers, change the env vars and restart. At startup the backend asks the embedding model for one vector to learn its dimension, so `EMBED_DIM` is only needed to override that. If the dimension changed, the vector columns are migrated and every stored chunk is re-embedded from its saved text in the background; no re-upload is needed. Answers from search are degraded until that finishes.
 
 When the backend runs in Docker, `localhost` means the container itself. Point `LLM_BASE_URL` at `http://host.docker.internal:11434/v1` to reach an Ollama on the host.
 
@@ -140,7 +140,7 @@ When the backend runs in Docker, `localhost` means the container itself. Point `
 3. Chunks are stored in the local Postgres + pgvector database for retrieval context
 4. You receive the embed snippet, and can create API keys for your own apps
 5. Anyone with the widget, or your app through the API, asks questions; widget conversations persist across reloads
-6. The agent searches the knowledge base (dense + BM25 + RAPTOR) as needed, answers with citations, captures leads, or escalates
+6. The agent searches the knowledge base (dense + lexical) as needed, answers with citations, captures leads, or escalates
 7. Business sees recent conversations and captured leads on `/dashboard/:id`, and asks its own questions in team chat at `/team/:id`
 
 ## Main files
@@ -149,7 +149,7 @@ When the backend runs in Docker, `localhost` means the container itself. Point `
 - `backend/src/server.js` API routes + widget hosting
 - `backend/src/ingest.js` chunk/embed/storage pipeline
 - `backend/src/services/agent.js` tool-calling agent loop (widget + team surfaces)
-- `backend/src/services/retriever.js` BlendedRAG retrieval (dense + BM25 + RAPTOR + rerank)
+- `backend/src/services/retriever.js` BlendedRAG retrieval (dense + lexical + rerank)
 - `backend/public/widget.js` embeddable widget script
 - `db/init.sql` PostgreSQL + pgvector schema (auto-applied by docker-compose)
 - `frontend/src/App.jsx` React router setup
@@ -175,10 +175,10 @@ Aligned with the sales-conversion JTBD (used only if you later fine-tune):
 
 `backend/src/services/retriever.js` keeps the existing hybrid pipeline, with these fixes:
 
-1. Every query searches source chunks. Explicit overview questions additionally search RAPTOR summaries; short factual questions no longer search summaries exclusively.
+1. Every query searches source chunks.
 2. Dense pgvector retrieval embeds the original question. Lexical retrieval uses PostgreSQL English full-text search and `ts_rank_cd` (not BM25).
-3. RRF (k=60) combines the rankings, using separate identities for source chunks and summaries, preserving per-stage scores. The old cosine-only rerank repeats the dense signal and can erase exact lexical matches, so it is now opt-in.
-4. Context deduplicates normalized text and admits at most five chunks, 4,000 characters per chunk and 12,000 total. Overview text uses this same budget. Agent searches share a 24,000-character budget across turns in one request, with stable source labels.
+3. RRF (k=60) combines the rankings, preserving per-stage scores. The old cosine-only rerank repeats the dense signal and can erase exact lexical matches, so it is now opt-in.
+4. Context deduplicates normalized text and admits at most five chunks, 4,000 characters per chunk and 12,000 total. Agent searches share a 24,000-character budget across turns in one request, with stable source labels.
 5. Missing embeddings degrade to lexical retrieval. Missing optional rewrite/rerank capabilities preserve the original query or fused ranking. Empty results escalate; nonempty results receive an uncalibrated `medium` confidence rather than pretending RRF is a probability.
 
 Chunking preserves short FAQ facts, paragraph boundaries, provenance and a heading-inclusive size bound. These changes apply on the next ingest/re-ingest; existing data stays intact. Character budgets approximate token usage and do not guarantee a particular model's token limit.
@@ -216,7 +216,7 @@ Existing databases receive the additive, idempotent `backend/migrations/001_requ
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/migrations/001_request_traces.sql
 ```
 
-`db/init.sql` includes the same additions for new databases. No existing rows or embeddings are dropped or rewritten by this migration. Startup/hourly cleanup removes expired traces and excess rows per bot; inserts also enforce age/count retention transactionally per bot. Reads exclude expired traces immediately. Cleanup requires the backend to be running; expiry is not an exact-time deletion guarantee. Existing messages and `eval_logs` have their existing lifecycle and are outside trace retention.
+`db/init.sql` includes the same additions for new databases. No existing rows or embeddings are dropped or rewritten by this migration. Startup/hourly cleanup removes expired traces and excess rows per bot; inserts also enforce age/count retention transactionally per bot. Reads exclude expired traces immediately. Cleanup requires the backend to be running; expiry is not an exact-time deletion guarantee. Existing messages have their existing lifecycle and are outside trace retention.
 
 All trace endpoints require `Authorization: Bearer <ADMIN_TOKEN>` and scope every lookup, including pagination cursors, to the bot:
 
@@ -253,7 +253,7 @@ The launcher is dependency-free (about 5 KB unminified). The widget preserves pa
 
 - Re-ingest is incremental: changed/added chunks are embedded; unchanged hashes retain their embeddings.
 - English FTS, approximate chunk/token budgets, synthetic evaluation coverage, and model citation compliance remain limitations. Scanned PDFs without a text layer are rejected (no OCR). Uploads are limited to 18 MB per file, and documents are processed one at a time per workspace by an in-process queue, so run a single API instance.
-- Existing sampled answer judging uses `EVAL_SAMPLE_RATE` (default 0.1); set `0` to disable those extra model calls. The repeatable eval harness is separate and offline by default.
+- The repeatable eval harness is offline by default.
 
 ## Developer API
 

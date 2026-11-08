@@ -11,7 +11,7 @@ function appWithAgent(runAgent, extra = {}) {
   const localRequire = createRequire(filename);
   const dependencies = {
     './services/agent': { runAgent },
-    './db': { getClient: async () => ({ name: 'Test' }), getHistory: async () => [] },
+    './db': { getClient: async () => ({ name: 'Test' }), getHistory: async () => [], saveMessage: async () => {} },
     './services/traces': { runTrace: async (_meta, fn) => fn({ id: 'test-trace' }), stage: async (_name, fn) => fn(), recordError() {} },
     ...extra,
   };

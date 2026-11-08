@@ -1,14 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { detectQueryLevel, reciprocalRankFusion, assembleContext, cosineSim } = require('../src/services/retriever');
+const { reciprocalRankFusion, assembleContext, cosineSim } = require('../src/services/retriever');
 
-test('short specific queries include leaves, explicit overview adds summaries', () => {
-  assert.deepEqual(detectQueryLevel('Refund deadline?'), [0]);
-  assert.deepEqual(detectQueryLevel('What is your refund policy?'), [0]);
-  assert.deepEqual(detectQueryLevel('Give me an overview'), [0, 1, 2]);
-});
-test('fusion namespaces summary IDs and preserves per-stage scores', () => {
+test('fusion namespaces IDs by level and preserves per-stage scores', () => {
   const dense = [{ id: '1', level: 2, content: 'Overview', similarity: .8 }];
   const lexical = [{ id: '1', level: 0, content: 'Refunds', lexical_score: .4 }];
   const rows = reciprocalRankFusion(dense, lexical);

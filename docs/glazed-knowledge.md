@@ -16,7 +16,7 @@ Glazed AI is for teams that want answers from their own policies, handbooks, pro
 4. When someone asks a question, the assistant searches the workspace's documents, then answers only from what it found and cites the sources.
 5. If the documents do not cover the question, the assistant says so instead of guessing.
 
-A document is usually ready to answer from within a few seconds of upload. After uploads finish, a summary layer over all documents is rebuilt in the background.
+A document is usually ready to answer from within a few seconds of upload.
 
 ## Supported documents
 
@@ -62,7 +62,7 @@ The dashboard is a sidebar app with one view per page:
 
 ## How answers stay grounded
 
-Retrieval combines two searches: dense vector search with pgvector and keyword (full-text) search in PostgreSQL. The two result lists are merged with Reciprocal Rank Fusion. A RAPTOR-style summary layer adds cluster and overview summaries for broad questions. A small tool-calling agent decides when to search, and falls back to plain retrieve-then-answer on model providers without tool calling. Answers cite numbered sources, and retrieved text is treated as reference material, never as instructions.
+Retrieval combines two searches: dense vector search with pgvector and keyword (full-text) search in PostgreSQL. The two result lists are merged with Reciprocal Rank Fusion. A small tool-calling agent decides when to search, and falls back to plain retrieve-then-answer on model providers without tool calling. Answers cite numbered sources, and retrieved text is treated as reference material, never as instructions.
 
 ## Models and privacy
 

@@ -7,6 +7,10 @@ process.env.DATABASE_URL = 'postgres://x:x@127.0.0.1:1/x';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const app = require('../src/server');
+const db = require('../src/db');
+
+// Chat limiter checks the workspace exists; no database in this suite.
+db.getClient = async (id) => { if (id === '404') throw new Error('Business not found'); return { id }; };
 
 async function withServer(t) {
   const server = await new Promise((resolve) => { const s = app.listen(0, () => resolve(s)); });
@@ -73,4 +77,9 @@ test('login is limited per account across IPs', async (t) => {
   // The DB is unreachable, so attempts under the limit fail with 500; the 11th is refused before any query.
   for (let i = 0; i < 10; i++) assert.equal((await post(`${base}/api/auth/login`, { email: 'Victim@x.co', password: 'p' })).status, 500);
   assert.equal((await post(`${base}/api/auth/login`, { email: 'victim@x.co', password: 'p' })).status, 429);
+});
+
+test('chat to an unknown workspace is 404 and not counted', async (t) => {
+  const base = await withServer(t);
+  assert.equal((await post(`${base}/api/chat/404/stream`, { message: 'hi', sessionId: 's' })).status, 404);
 });

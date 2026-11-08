@@ -43,9 +43,7 @@ function loadRetriever(filename, fixture) {
   const assertBot = (id) => { if (String(id) !== String(fixture.businessId || 1)) throw new Error('Fixture bot scope mismatch'); };
   const db = {
     matchChunks: async (_vector, bot, level) => { assertBot(bot); return rows((fixture.dense || []).filter((r) => (r.level || 0) === level)); },
-    matchSummaries: async (_vector, bot, level) => { assertBot(bot); return rows((fixture.summaries || []).filter((r) => r.level === level)); },
     matchChunksFts: async (_query, bot) => { assertBot(bot); return rows(fixture.lexical); },
-    plainFtsSearch: async (_query, bot) => { assertBot(bot); return rows(fixture.lexicalFallback); },
     getEmbeddingsForIds: async (ids, bot) => {
       if (bot !== undefined) assertBot(bot);
       return new Map(Object.entries(fixture.embeddings || {}).filter(([id]) => ids.some((value) => String(value) === id)));

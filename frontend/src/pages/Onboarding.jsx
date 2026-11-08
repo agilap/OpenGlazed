@@ -243,13 +243,12 @@ export default function Onboarding() {
             <div>
               <p style={{"margin": "0 0 16px", "fontFamily": "'JetBrains Mono', monospace", "fontSize": "11px", "letterSpacing": "0.08em", "color": "#8a8a96"}}>RETRIEVAL</p>
               <h3 style={{"margin": "0 0 16px", "maxWidth": "380px", "fontSize": "28px", "fontWeight": "500", "letterSpacing": "-0.02em", "lineHeight": "1.2"}}>Hybrid retrieval, not a vector lookup</h3>
-              <p style={{"margin": "0", "maxWidth": "400px", "fontSize": "15px", "lineHeight": "1.55", "color": "#a1a1aa"}}>Dense and lexical search fused with Reciprocal Rank Fusion, a RAPTOR summary layer, and a local cosine rerank. All on by default, no extra services.</p>
+              <p style={{"margin": "0", "maxWidth": "400px", "fontSize": "15px", "lineHeight": "1.55", "color": "#a1a1aa"}}>Dense and lexical search fused with Reciprocal Rank Fusion, plus an optional local cosine rerank. No extra services.</p>
             </div>
             <div style={{"background": "#15151b", "border": "1px solid #2a2a33", "borderRadius": "8px", "padding": "24px", "fontFamily": "'JetBrains Mono', monospace", "fontSize": "13px", "lineHeight": "2", "overflowX": "auto"}}>
               <div style={{"display": "grid", "gridTemplateColumns": "90px 1fr"}}><span style={{"color": "#c0c1ff"}}>dense</span><span style={{"color": "#a1a1aa"}}>pgvector</span></div>
               <div style={{"display": "grid", "gridTemplateColumns": "90px 1fr"}}><span style={{"color": "#c0c1ff"}}>bm25</span><span style={{"color": "#a1a1aa"}}>postgres fts</span></div>
               <div style={{"display": "grid", "gridTemplateColumns": "90px 1fr"}}><span style={{"color": "#c0c1ff"}}>fuse</span><span style={{"color": "#a1a1aa"}}>rrf k=60</span></div>
-              <div style={{"display": "grid", "gridTemplateColumns": "90px 1fr"}}><span style={{"color": "#c0c1ff"}}>raptor</span><span style={{"color": "#a1a1aa"}}>summary layer</span></div>
               <div style={{"display": "grid", "gridTemplateColumns": "90px 1fr"}}><span style={{"color": "#c0c1ff"}}>rerank</span><span style={{"color": "#a1a1aa"}}>local cosine</span></div>
             </div>
           </article>
@@ -374,7 +373,7 @@ function RetrievalTrace() {
   const step = Math.min(tick, 4);
   const sizes = [48, 24, 12, 5];
   const columns = [
-    { name: 'CHUNKS + RAPTOR', detail: 'your documents and their summaries' },
+    { name: 'CHUNKS', detail: 'your documents, split for search' },
     { name: 'DENSE + BM25', detail: 'pgvector + postgres fts' },
     { name: 'RRF', detail: 'rank fusion, k=60' },
     { name: 'RERANK', detail: 'local cosine, top 5' },

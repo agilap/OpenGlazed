@@ -2,7 +2,7 @@
 
 const path = require('node:path');
 const { Worker } = require('node:worker_threads');
-const { ingestNormalized, rebuildSummaries } = require('../ingest');
+const { ingestNormalized } = require('../ingest');
 const db = require('../db');
 
 const markdown = require('./markdown');
@@ -22,9 +22,7 @@ async function ingestSource(businessId, sourceType, payload = {}) {
   const sections = BINARY_TYPES.has(sourceType) ? await parseInWorker(sourceType, payload) : await parser.parse(payload);
   return ingestNormalized(sections, {
     businessId,
-    sourceType,
     sourceRef: payload.sourceRef || payload.filename || payload.url || sourceType,
-    skipSummaries: Boolean(payload.skipSummaries),
   });
 }
 
@@ -87,38 +85,18 @@ function ingestDocument(businessId, document, payload) {
     const sourceRef = 'doc:' + document.id;
     try {
       await db.updateDocument(document.id, { status: 'processing' });
-      await ingestSource(businessId, document.source_type, { ...payload, filename: document.filename, sourceRef, skipSummaries: true });
+      await ingestSource(businessId, document.source_type, { ...payload, filename: document.filename, sourceRef });
       await db.updateDocument(document.id, { status: 'ready', chunkCount: await db.countChunksBySource(businessId, sourceRef) });
     } catch (error) {
       await db.updateDocument(document.id, { status: 'error', error: String(error.message || error).slice(0, 300) }).catch(() => {});
       throw error;
-    } finally {
-      scheduleSummaries(businessId);
     }
   });
-}
-
-const summaryPending = new Set();
-function scheduleSummaries(businessId) {
-  const key = String(businessId);
-  if (summaryPending.has(key)) return;
-  summaryPending.add(key);
-  enqueue(businessId, async () => {
-    summaryPending.delete(key);
-    try {
-      await rebuildSummaries(businessId);
-    } catch (error) {
-      console.warn('[sources] summary rebuild skipped:', error.message);
-    }
-  }).catch(() => {});
 }
 
 function removeDocument(businessId, documentId) {
   return enqueue(businessId, async () => {
     await db.deleteDocument(businessId, documentId);
-    await db.deleteSummaries(businessId, 1);
-    await db.deleteSummaries(businessId, 2);
-    scheduleSummaries(businessId);
   });
 }
 
@@ -131,7 +109,6 @@ async function recoverInterrupted({ businessId = null } = {}) {
   await db.query("UPDATE businesses SET ingest_status = 'active' WHERE ingest_status = 'ingesting' AND ($1::bigint IS NULL OR id = $1)", [businessId]);
   const deleting = await db.query("SELECT id, business_id FROM documents WHERE status = 'deleting' AND ($1::bigint IS NULL OR business_id = $1)", [businessId]);
   for (const doc of deleting.rows) removeDocument(doc.business_id, doc.id).catch((error) => console.error('[sources] delete retry failed for', doc.business_id, doc.id, error.message));
-  for (const businessId of new Set(failed.rows.map((doc) => String(doc.business_id)))) scheduleSummaries(businessId);
   return { failed: failed.rowCount, deleting: deleting.rowCount };
 }
 

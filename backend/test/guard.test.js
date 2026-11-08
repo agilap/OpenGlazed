@@ -35,7 +35,7 @@ test('classification prompt includes workspace topic context and off-topic rules
   assert.deepEqual(classification, { status: 'off_topic', reason: 'Unrelated.' });
   assert.match(captured, /Glazed AI guide\.pdf/);
   assert.match(captured, /Product notes\.txt/);
-  assert.match(captured, /Glazed AI reads documents\./);
+  assert.doesNotMatch(captured, /Glazed AI reads documents\./);
   assert.match(captured, /off_topic: The question is unrelated to that subject, even if the assistant declined it/);
   assert.match(captured, /means the question was off_topic, not unanswered/);
 });

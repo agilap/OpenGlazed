@@ -123,7 +123,7 @@ async function runTool(name, args, ctx, state) {
         if (remaining <= 0) break;
         const content = String(chunk.content || '').slice(0, Math.min(6000, remaining));
         if (!content) continue;
-        const source = chunk.source_url || (chunk.level === 2 ? 'business summary' : 'knowledge base');
+        const source = chunk.source_url || 'knowledge base';
         if (!state.sourceLabels.has(source)) state.sourceLabels.set(source, state.sourceLabels.size + 1);
         const item = { ...chunk, content, citation_index: state.sourceLabels.get(source) };
         state.seen.add(key);
@@ -163,7 +163,7 @@ function buildCitations(chunks) {
   const citations = [];
   const seen = new Set();
   for (const ch of chunks) {
-    const src = ch.source_url || (ch.level === 2 ? 'business summary' : 'knowledge base');
+    const src = ch.source_url || 'knowledge base';
     if (seen.has(src)) continue;
     seen.add(src);
     citations.push({ index: ch.citation_index || citations.length + 1, content: (ch.content || '').slice(0, 240), source: src, level: ch.level });
@@ -171,11 +171,11 @@ function buildCitations(chunks) {
   return citations;
 }
 
-async function runPlainRag({ businessId, business, history, message, emit, retrieveFn }) {
+async function runPlainRag({ businessId, business, history, message, emit, retrieveFn, signal }) {
   const r = await retrieveFn(businessId, message);
   const sourceLabels = new Map();
   r.chunks = r.chunks.map((chunk) => {
-    const source = chunk.source_url || (chunk.level === 2 ? 'business summary' : 'knowledge base');
+    const source = chunk.source_url || 'knowledge base';
     if (!sourceLabels.has(source)) sourceLabels.set(source, sourceLabels.size + 1);
     return { ...chunk, citation_index: sourceLabels.get(source) };
   });
@@ -204,9 +204,8 @@ async function runPlainRag({ businessId, business, history, message, emit, retri
       brandTone: business.brand_tone || 'professional',
       conversationHistory: history,
       keyCta: business.key_cta || 'Get in touch',
-      raptorSummary: r.raptorSummary,
     },
-    { onToken: emit }
+    { onToken: emit, signal }
   );
 
   if (gen.escalated) {
@@ -217,7 +216,7 @@ async function runPlainRag({ businessId, business, history, message, emit, retri
   return { ...base, response: gen.response, escalated: false, source: gen.source, citations: buildCitations(r.chunks) };
 }
 
-async function runAgent({ businessId, business, surface = 'widget', sessionId, history = [], message, onToken, deps = {} }) {
+async function runAgent({ businessId, business, surface = 'widget', sessionId, history = [], message, onToken, signal, deps = {} }) {
   const chat = deps.chat || chatStream;
   const retrieveFn = deps.retrieve || retrieve;
   const ctx = { businessId, sessionId, surface, message, retrieve: retrieveFn, saveLead: deps.saveLead || db.saveLead };
@@ -243,6 +242,7 @@ async function runAgent({ businessId, business, surface = 'widget', sessionId, h
       let first = true;
       const { content, toolCalls } = await chat(messages, {
         tools,
+        signal,
         toolChoice: last ? 'none' : step === 0 && tools.some((t) => t.function.name === 'search_knowledge') ? { type: 'function', function: { name: 'search_knowledge' } } : undefined,
         onToken: (t) => { emit(first ? sep + t : t); first = false; },
       });
@@ -265,7 +265,7 @@ async function runAgent({ businessId, business, surface = 'widget', sessionId, h
   } catch (err) {
     if (shown || ![400, 404, 422].includes(err.status)) throw err;
     console.warn('[agent] provider rejected tool calling, using plain RAG:', err.message);
-    return runPlainRag({ businessId, business, history, message, emit, retrieveFn });
+    return runPlainRag({ businessId, business, history, message, emit, retrieveFn, signal });
   }
 
   if (!shown.trim()) emit("Sorry, I couldn't put an answer together. Could you rephrase that?");

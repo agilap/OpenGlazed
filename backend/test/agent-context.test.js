@@ -8,8 +8,10 @@ const call = (query) => ({ id: query, type: 'function', function: { name: 'searc
 test('knowledge context has stable source labels and repeated searches do not duplicate content', async () => {
   const seen = [];
   let n = 0;
-  const result = await runAgent({ businessId: 1, business: { name: 'Acme' }, message: 'pricing and shipping', deps: {
-    chat: async (messages, { onToken }) => {
+  const signal = new AbortController().signal;
+  const result = await runAgent({ businessId: 1, business: { name: 'Acme' }, message: 'pricing and shipping', signal, deps: {
+    chat: async (messages, { onToken, signal: chatSignal }) => {
+      assert.equal(chatSignal, signal);
       seen.push(messages.slice());
       n += 1;
       if (n < 3) return { content: '', toolCalls: [call(String(n))] };

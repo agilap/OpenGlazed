@@ -5,12 +5,6 @@ const db = require('../db');
 const { embedQuery } = require('./llm');
 const { stage, recordRetrieval, recordError } = require('./traces');
 
-function detectQueryLevel(query) {
-  const normalized = (query || '').toLowerCase().trim();
-  const overview = /\b(overview|summary|what do you (do|offer)|who are you|tell me about (your business|the company))\b/.test(normalized);
-  return overview ? [0, 1, 2] : [0];
-}
-
 function normalizeResultRow(row, fallbackLevel = 0) {
   return {
     id: row?.id ?? null,
@@ -23,10 +17,6 @@ function normalizeResultRow(row, fallbackLevel = 0) {
   };
 }
 
-async function embedQueryLocal(queryText) {
-  return embedQuery(queryText);
-}
-
 async function queryBM25(queryText, businessId) {
   const safeQuery = (queryText || '').trim();
   if (!safeQuery) {
@@ -34,16 +24,7 @@ async function queryBM25(queryText, businessId) {
   }
 
   const rows = await db.matchChunksFts(safeQuery, businessId, 20);
-  if (rows.length > 0) {
-    return rows.map((row) => normalizeResultRow(row, 0));
-  }
-
-  const plainRows = await db.plainFtsSearch(safeQuery, businessId, 20);
-  if (plainRows.length === 0) {
-    return [];
-  }
-
-  return plainRows.map((row) => normalizeResultRow(row, 0));
+  return rows.map((row) => normalizeResultRow(row, 0));
 }
 
 function mergeBm25Results(primary, secondary) {
@@ -123,7 +104,7 @@ function reciprocalRankFusion(dense, bm25, k = 60) {
     .slice(0, 20);
 }
 
-function assessConfidence(topScore, chunkCount, queryLevels, reranked) {
+function assessConfidence(topScore, chunkCount, reranked) {
   if (!chunkCount) return { confidence: 'low', shouldEscalate: true, reason: 'No chunks retrieved' };
   if (reranked && topScore < 0) return { confidence: 'low', shouldEscalate: true, reason: 'Negative cosine relevance' };
   return { confidence: 'medium', shouldEscalate: false, reason: null };
@@ -148,7 +129,6 @@ function assembleContext(candidates, { maxChunks = 5, maxChars = 12000, chunkCha
 async function retrieve(businessId, rawQuery, { rewrite = process.env.RAG_QUERY_REWRITE === 'true', dense = true, rerank = process.env.RAG_COSINE_RERANK === 'true', maxChunks = 5 } = {}) {
   const safeRawQuery = (rawQuery || '').trim();
 
-  const rawLevels = detectQueryLevel(safeRawQuery);
   const rewritePromise = rewrite ? stage('query_rewrite', () => generateQueryRewrite(safeRawQuery)) : Promise.resolve(safeRawQuery);
   const rawBm25Promise = stage('lexical_raw', () => queryBM25(safeRawQuery, businessId));
   rawBm25Promise.catch(() => {});
@@ -161,7 +141,6 @@ async function retrieve(businessId, rawQuery, { rewrite = process.env.RAG_QUERY_
     rewrittenQuery = safeRawQuery;
   }
 
-  const levelsQueried = rawLevels;
   const rewrittenBm25Promise = rewrittenQuery !== safeRawQuery
     ? stage('lexical_rewrite', () => queryBM25(rewrittenQuery, businessId)) : Promise.resolve([]);
 
@@ -170,7 +149,7 @@ async function retrieve(businessId, rawQuery, { rewrite = process.env.RAG_QUERY_
   let bm25RewriteResults = [];
 
   const [embedResult, bm25RawResult, bm25RewriteResult] = await Promise.allSettled([
-    dense ? stage('query_embedding', () => embedQueryLocal(safeRawQuery)) : Promise.resolve(null),
+    dense ? stage('query_embedding', () => embedQuery(safeRawQuery)) : Promise.resolve(null),
     rawBm25Promise,
     rewrittenBm25Promise,
   ]);
@@ -201,109 +180,49 @@ async function retrieve(businessId, rawQuery, { rewrite = process.env.RAG_QUERY_
     console.warn('[retriever] Query embedding unavailable — skipping dense retrieval');
   }
 
-  const densePromise = (async () => {
-    if (!queryEmbedding) {
-      return [];
+  let denseResults = [];
+  if (queryEmbedding) {
+    try {
+      const rows = await stage('dense_chunks', () => db.matchChunks(queryEmbedding, businessId, 0, 20));
+      denseResults = (Array.isArray(rows) ? rows : [])
+        .map((row) => normalizeResultRow(row, 0))
+        .sort((a, b) => (b.similarity ?? -1) - (a.similarity ?? -1));
+    } catch (error) {
+      console.warn('[retriever] Dense retrieval failed:', error.message);
     }
-
-    const rpcCalls = [];
-    const rpcMeta = [];
-
-    if (levelsQueried.includes(0)) {
-      rpcCalls.push(stage('dense_chunks', () => db.matchChunks(queryEmbedding, businessId, 0, 20)));
-      rpcMeta.push(0);
-    }
-
-    if (levelsQueried.includes(1)) {
-      rpcCalls.push(stage('dense_summary_1', () => db.matchSummaries(queryEmbedding, businessId, 1, 5)));
-      rpcMeta.push(1);
-    }
-
-    if (levelsQueried.includes(2)) {
-      rpcCalls.push(stage('dense_summary_2', () => db.matchSummaries(queryEmbedding, businessId, 2, 3)));
-      rpcMeta.push(2);
-    }
-
-    if (rpcCalls.length === 0) {
-      return [];
-    }
-
-    const settledDenseCalls = await Promise.allSettled(rpcCalls);
-    const combined = [];
-
-    for (let idx = 0; idx < settledDenseCalls.length; idx += 1) {
-      const result = settledDenseCalls[idx];
-      if (result.status !== 'fulfilled') {
-        console.warn('[retriever] Dense sub-query failed:', result.reason?.message || result.reason);
-        continue;
-      }
-
-      const rows = Array.isArray(result.value) ? result.value : [];
-      const fallbackLevel = rpcMeta[idx];
-      for (const row of rows) {
-        combined.push(normalizeResultRow(row, row?.level ?? fallbackLevel));
-      }
-    }
-
-    return combined.sort((a, b) => (b.similarity ?? -1) - (a.similarity ?? -1));
-  })();
-
-  const denseResult = await Promise.allSettled([densePromise]);
-  const denseResults = denseResult[0].status === 'fulfilled' ? denseResult[0].value : [];
-
-  if (denseResult[0].status === 'rejected') {
-    console.warn('[retriever] Dense retrieval failed:', denseResult[0].reason?.message || denseResult[0].reason);
   }
 
   const fused = await stage('fusion', async () => reciprocalRankFusion(denseResults, bm25Results, 60));
-  const raptorSummary = null;
 
   let rerankSucceeded = false;
   let rankedCandidates = fused;
-  let top5 = assembleContext(fused, { maxChunks });
-  let topScore = fused[0]?.rrf_score || 0;
 
-  if (rerank && fused.length > 0 && !levelsQueried.includes(2)) {
-    if (queryEmbedding) {
-      try {
-        const ids = fused.filter((row) => row.level === 0).map((row) => row.id).filter((id) => id != null);
-        const embMap = await stage('rerank_embeddings', () => db.getEmbeddingsForIds(ids, businessId));
-        const scored = fused
-          .map((row) => ({
-            ...row,
-            rerank_score: row.level === 0 && embMap.has(String(row.id)) ? cosineSim(queryEmbedding, embMap.get(String(row.id))) : null,
-          }))
-          .sort((a, b) => (b.rerank_score ?? -1) - (a.rerank_score ?? -1) || b.rrf_score - a.rrf_score);
-        rankedCandidates = scored;
-        top5 = assembleContext(scored, { maxChunks });
-        topScore = top5[0]?.rerank_score ?? 0;
-        rerankSucceeded = scored.some((row) => Number.isFinite(row.rerank_score));
-      } catch (error) {
-        recordError(error, 'rerank');
-        console.warn('[retriever] Local rerank failed:', error.message);
-      }
+  if (rerank && fused.length > 0 && queryEmbedding) {
+    try {
+      const ids = fused.filter((row) => row.level === 0).map((row) => row.id).filter((id) => id != null);
+      const embMap = await stage('rerank_embeddings', () => db.getEmbeddingsForIds(ids, businessId));
+      rankedCandidates = fused
+        .map((row) => ({
+          ...row,
+          rerank_score: row.level === 0 && embMap.has(String(row.id)) ? cosineSim(queryEmbedding, embMap.get(String(row.id))) : null,
+        }))
+        .sort((a, b) => (b.rerank_score ?? -1) - (a.rerank_score ?? -1) || b.rrf_score - a.rrf_score);
+      rerankSucceeded = rankedCandidates.some((row) => Number.isFinite(row.rerank_score));
+    } catch (error) {
+      recordError(error, 'rerank');
+      console.warn('[retriever] Local rerank failed:', error.message);
     }
   }
 
-  if (!rerankSucceeded) {
-    top5 = assembleContext(fused, { maxChunks });
-    topScore = fused[0]?.rrf_score || 0;
-  }
-
-  top5 = await stage('context_assembly', async () => assembleContext(rankedCandidates, { maxChunks }));
-  const { confidence, shouldEscalate, reason } = assessConfidence(
-    topScore,
-    top5.length,
-    levelsQueried,
-    rerankSucceeded
-  );
+  const top5 = await stage('context_assembly', async () => assembleContext(rankedCandidates, { maxChunks }));
+  const topScore = rerankSucceeded ? top5[0]?.rerank_score ?? 0 : fused[0]?.rrf_score || 0;
+  const { confidence, shouldEscalate, reason } = assessConfidence(topScore, top5.length, rerankSucceeded);
 
   const retrievalPath = {
     denseCount: denseResults.length,
     bm25Count: bm25Results.length,
     fusedCount: fused.length,
     reranked: rerankSucceeded,
-    levelsQueried,
     topScore,
   };
 
@@ -318,11 +237,14 @@ async function retrieve(businessId, rawQuery, { rewrite = process.env.RAG_QUERY_
     shouldEscalate,
     reason: reason || null,
     rewrittenQuery,
-    raptorSummary,
     retrievalPath,
   };
-  recordRetrieval(result);
+  const slim = (rows) => rows.map(({ id, level, source_url, rrf_score, similarity, lexical_score, rerank_score, content }) => ({
+    id, level, source_url, rrf_score, similarity, lexical_score, rerank_score, content: (content || '').slice(0, 200),
+  }));
+  recordRetrieval({ ...result, chunks: slim(result.chunks), candidates: slim(result.candidates),
+    stageCandidates: Object.fromEntries(Object.entries(result.stageCandidates).map(([name, rows]) => [name, slim(rows)])) });
   return result;
 }
 
-module.exports = { retrieve, detectQueryLevel, reciprocalRankFusion, assembleContext, cosineSim };
+module.exports = { retrieve, reciprocalRankFusion, assembleContext, cosineSim };

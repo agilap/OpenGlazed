@@ -4,22 +4,12 @@ const crypto = require('crypto');
 const {
   updateClientStatus,
   updateIngestProgress,
-  deleteChunksByBusiness,
   getStoredHashes,
   deleteChunksBySourceExcept,
-  getAllChunks,
   insertChunks,
-  deleteSummaries,
-  insertSummaries,
-  updateBusiness,
 } = require('./db');
 
-const { embedTexts } = require('./services/embeddings');
-const { chatComplete } = require('./services/llm');
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+const { embedTexts } = require('./services/llm');
 
 function normalizeWhitespace(text) {
   return text
@@ -90,31 +80,17 @@ function buildSemanticChunks(docs, businessId) {
   return chunks;
 }
 
-function buildLevel0Chunks(docs, businessId) {
-  return buildSemanticChunks(docs, businessId);
-}
-
-async function embedTextsLocal(texts) {
-  return embedTexts(texts);
-}
-
 async function attachChunkEmbeddings(chunks) {
   const batchSize = 50;
 
   for (let i = 0; i < chunks.length; i += batchSize) {
     const batch = chunks.slice(i, i + batchSize);
 
-    try {
-      const embeddings = await embedTextsLocal(batch.map((chunk) => chunk.content));
-      batch.forEach((chunk, idx) => {
-        chunk.embedding = embeddings[idx] || null;
-      });
-    } catch (error) {
-      console.warn(`[ingest] Embedding batch ${i}-${i + batch.length - 1} failed: ${error.message}`);
-      batch.forEach((chunk) => {
-        chunk.embedding = null;
-      });
-    }
+    const embeddings = await embedTexts(batch.map((chunk) => chunk.content));
+    if (embeddings.length !== batch.length) throw new Error(`Embedding provider returned ${embeddings.length} vectors for ${batch.length} chunks.`);
+    batch.forEach((chunk, idx) => {
+      chunk.embedding = embeddings[idx] || null;
+    });
   }
 
   return chunks;
@@ -124,47 +100,18 @@ function hashText(text) {
   return crypto.createHash('sha256').update(text).digest('hex');
 }
 
-async function storeLevel0Chunks(chunks, businessId, sourceRef = null) {
-  if (!sourceRef) {
-    await deleteChunksByBusiness(businessId);
-  } else {
-    const existing = await getStoredHashes(businessId, sourceRef);
-    const incoming = chunks.map((c) => hashText(c.content));
-    const keepHashes = incoming.filter((h) => !existing.has(h));
-    const changed = new Set(keepHashes);
+async function storeLevel0Chunks(chunks, businessId, sourceRef) {
+  const existing = await getStoredHashes(businessId, sourceRef);
+  const incoming = chunks.map((c) => hashText(c.content));
+  const changed = new Set(incoming.filter((h) => !existing.has(h)));
+  const unchanged = incoming.length - incoming.filter((h) => !existing.has(h)).length;
+  const removed = await deleteChunksBySourceExcept(businessId, sourceRef, incoming);
+  const toInsert = chunks.filter((c) => changed.has(hashText(c.content)));
 
-    const added = incoming.filter((h) => !existing.has(h)).length;
-    const unchanged = incoming.length - added;
-    const removed = await deleteChunksBySourceExcept(businessId, sourceRef, incoming);
-
-    const toInsert = chunks.filter((c) => changed.has(hashText(c.content)));
-
-    let insertedCount = 0;
-    const batchSize = 100;
-    for (let i = 0; i < toInsert.length; i += batchSize) {
-      const batch = toInsert.slice(i, i + batchSize).map((chunk, idx) => ({
-        business_id: businessId,
-        chunk_text: chunk.content,
-        source_url: chunk.source_url,
-        source_ref: sourceRef,
-        chunk_index: i + idx,
-        level: 0,
-        token_count: chunk.token_count,
-        embedding: chunk.embedding || null,
-        content_hash: hashText(chunk.content),
-      }));
-      const stored = await insertChunks(batch);
-      insertedCount += stored.length;
-    }
-
-    return { added: insertedCount, unchanged, removed: Number(removed) || 0 };
-  }
-
-  const inserted = [];
+  let insertedCount = 0;
   const batchSize = 100;
-
-  for (let i = 0; i < chunks.length; i += batchSize) {
-    const batch = chunks.slice(i, i + batchSize).map((chunk, idx) => ({
+  for (let i = 0; i < toInsert.length; i += batchSize) {
+    const batch = toInsert.slice(i, i + batchSize).map((chunk, idx) => ({
       business_id: businessId,
       chunk_text: chunk.content,
       source_url: chunk.source_url,
@@ -175,15 +122,14 @@ async function storeLevel0Chunks(chunks, businessId, sourceRef = null) {
       embedding: chunk.embedding || null,
       content_hash: hashText(chunk.content),
     }));
-
     const stored = await insertChunks(batch);
-    inserted.push(...stored);
+    insertedCount += stored.length;
   }
 
-  return { added: inserted.length, unchanged: 0, removed: 0 };
+  return { added: insertedCount, unchanged, removed: Number(removed) || 0 };
 }
 
-async function ingestNormalized(sections, { businessId, sourceType, sourceRef, skipSummaries = false }) {
+async function ingestNormalized(sections, { businessId, sourceRef }) {
   try {
     await updateClientStatus(businessId, 'ingesting');
     await updateIngestProgress(businessId, 10);
@@ -202,11 +148,6 @@ async function ingestNormalized(sections, { businessId, sourceType, sourceRef, s
     const stored = await storeLevel0Chunks(level0Chunks, businessId, sourceRef);
     await updateIngestProgress(businessId, 55);
 
-    try {
-      if (!skipSummaries) await rebuildSummaries(businessId);
-    } catch (error) {
-      console.warn('[ingest] summary layer skipped:', error.message);
-    }
     await updateIngestProgress(businessId, 90);
 
     await updateClientStatus(businessId, 'active');
@@ -221,291 +162,19 @@ async function ingestNormalized(sections, { businessId, sourceType, sourceRef, s
 async function reembedMissing() {
   const { query } = require('./db');
   let total = 0;
-  for (const [table, column] of [['chunks', 'chunk_text'], ['summaries', 'content']]) {
-    let lastId = 0;
-    for (;;) {
-      const { rows } = await query(`SELECT id, ${column} AS text FROM ${table} WHERE embedding IS NULL AND id > $1 ORDER BY id LIMIT 64`, [lastId]);
-      if (!rows.length) break;
-      lastId = rows[rows.length - 1].id;
-      const vectors = await embedTexts(rows.map((row) => row.text));
-      for (let i = 0; i < rows.length; i += 1) {
-        if (Array.isArray(vectors[i])) await query(`UPDATE ${table} SET embedding = $2 WHERE id = $1`, [rows[i].id, `[${vectors[i].join(',')}]`]);
-      }
-      total += rows.length;
+  let lastId = 0;
+  for (;;) {
+    const { rows } = await query('SELECT id, chunk_text AS text FROM chunks WHERE embedding IS NULL AND id > $1 ORDER BY id LIMIT 64', [lastId]);
+    if (!rows.length) break;
+    lastId = rows[rows.length - 1].id;
+    const vectors = await embedTexts(rows.map((row) => row.text));
+    for (let i = 0; i < rows.length; i += 1) {
+      if (Array.isArray(vectors[i])) await query('UPDATE chunks SET embedding = $2 WHERE id = $1', [rows[i].id, `[${vectors[i].join(',')}]`]);
     }
+    total += rows.length;
   }
   return total;
 }
 
-async function rebuildSummaries(businessId) {
-  const allChunks = await getAllChunks(businessId);
-  if (!allChunks.length) {
-    await deleteSummaries(businessId, 1);
-    await deleteSummaries(businessId, 2);
-    return;
-  }
-  const level1Rows = await buildLevel1Summaries(allChunks, businessId);
-  const level2Summary = await buildLevel2Summary(level1Rows, businessId);
-  await extractAndSaveBusinessProfile(level2Summary, businessId);
-}
 
-function dot(a, b) {
-  let s = 0;
-  for (let i = 0; i < a.length; i += 1) s += a[i] * b[i];
-  return s;
-}
-function norm(a) {
-  return Math.sqrt(dot(a, a)) || 1;
-}
-function cosineDist(a, b) {
-  return 1 - dot(a, b) / (norm(a) * norm(b));
-}
-function kmeans(vectors, k, iterations = 12) {
-  const n = vectors.length;
-  const dim = vectors[0].length;
-  if (n <= k) return vectors.map((_, i) => i % k);
-
-  const centroids = [vectors[Math.floor(Math.random() * n)].slice()];
-  while (centroids.length < k) {
-    let best = null;
-    let bestD = -1;
-    for (const v of vectors) {
-      const d = Math.min(...centroids.map((c) => cosineDist(v, c)));
-      if (d > bestD) { bestD = d; best = v; }
-    }
-    centroids.push(best.slice());
-  }
-
-  let labels = new Array(n).fill(0);
-  for (let it = 0; it < iterations; it += 1) {
-    for (let i = 0; i < n; i += 1) {
-      let best = 0;
-      let bestD = Infinity;
-      for (let c = 0; c < k; c += 1) {
-        const d = cosineDist(vectors[i], centroids[c]);
-        if (d < bestD) { bestD = d; best = c; }
-      }
-      labels[i] = best;
-    }
-    const sums = Array.from({ length: k }, () => new Array(dim).fill(0));
-    const counts = new Array(k).fill(0);
-    for (let i = 0; i < n; i += 1) {
-      const c = labels[i];
-      counts[c] += 1;
-      for (let j = 0; j < dim; j += 1) sums[c][j] += vectors[i][j];
-    }
-    for (let c = 0; c < k; c += 1) {
-      if (counts[c] > 0) centroids[c] = sums[c].map((x) => x / counts[c]);
-    }
-  }
-  return labels;
-}
-
-async function clusterEmbeddings(embeddings, k) {
-  if (!Array.isArray(embeddings) || embeddings.length === 0) return [];
-  return kmeans(embeddings, k);
-}
-
-async function callLLM(prompt, { timeoutMs } = {}) {
-  return chatComplete(prompt);
-}
-
-async function buildLevel1Summaries(storedChunks, businessId) {
-  const embedded = storedChunks.filter((chunk) => Array.isArray(chunk.embedding));
-  if (embedded.length === 0) {
-    return [];
-  }
-
-  const k = Math.max(3, Math.floor(Math.sqrt(storedChunks.length)));
-
-  let labels;
-  try {
-    labels = await clusterEmbeddings(
-      embedded.map((chunk) => chunk.embedding),
-      k
-    );
-  } catch (error) {
-    console.warn('[ingest] Clustering failed:', error.message);
-    return [];
-  }
-
-  const groups = new Map();
-  for (let i = 0; i < embedded.length; i += 1) {
-    const label = Number.isInteger(labels[i]) ? labels[i] : 0;
-    if (!groups.has(label)) {
-      groups.set(label, []);
-    }
-    groups.get(label).push(embedded[i]);
-  }
-
-  const clusters = Array.from(groups.entries()).map(([clusterId, chunks]) => ({
-    clusterId,
-    chunks,
-  }));
-
-  function clusterPrompt(cluster) {
-    return [
-      'You are building a retrieval index for a business chatbot.',
-      'Write a dense summary paragraph (150-250 words) capturing every distinct',
-      'fact, service, feature, claim, price, timeline, and credential.',
-      "Use the business's own terminology. Factual, not marketing copy.",
-      `CHUNKS: ${cluster.chunks.map((chunk) => chunk.content).join('\n---\n')}`,
-      'SUMMARY:',
-    ].join('\n');
-  }
-
-  function fallbackClusterSummary(cluster) {
-    return cluster.chunks.map((chunk) => chunk.content).join('\n---\n').slice(0, 6000);
-  }
-
-  async function summarizeCluster(cluster) {
-    try {
-      const content = await callLLM(clusterPrompt(cluster), { timeoutMs: 8000 });
-      return {
-        clusterId: cluster.clusterId,
-        chunks: cluster.chunks,
-        content: content || fallbackClusterSummary(cluster),
-      };
-    } catch (error) {
-      if (error && error.code === 'TIMEOUT') {
-        return {
-          clusterId: cluster.clusterId,
-          chunks: cluster.chunks,
-          content: fallbackClusterSummary(cluster),
-        };
-      }
-
-      throw error;
-    }
-  }
-
-  let summaryResults = await Promise.allSettled(
-    clusters.map((cluster) => summarizeCluster(cluster))
-  );
-
-  const retryIndexes = [];
-  summaryResults.forEach((result, index) => {
-    if (result.status === 'rejected' && result.reason && result.reason.status === 429) {
-      retryIndexes.push(index);
-    }
-  });
-
-  if (retryIndexes.length > 0) {
-    await sleep(10000);
-    const retryClusters = retryIndexes.map((index) => clusters[index]);
-    const retryResults = await Promise.allSettled(
-      retryClusters.map((cluster) => summarizeCluster(cluster))
-    );
-
-    retryIndexes.forEach((originalIndex, retryIndex) => {
-      summaryResults[originalIndex] = retryResults[retryIndex];
-    });
-  }
-
-  const level1Rows = [];
-
-  for (let summaryIndex = 0; summaryIndex < summaryResults.length; summaryIndex += 1) {
-    const summaryResult = summaryResults[summaryIndex];
-    if (summaryResult.status !== 'fulfilled') {
-      const failedClusterId = clusters[summaryIndex]?.clusterId;
-      console.warn(`[ingest] Level 1 summary failed for cluster ${failedClusterId}: ${summaryResult.reason?.message || summaryResult.reason}`);
-      continue;
-    }
-
-    const { clusterId, chunks, content } = summaryResult.value;
-
-    let embedding = null;
-    try {
-      const embeddings = await embedTexts([content]);
-      embedding = embeddings[0] || null;
-    } catch (error) {
-      console.warn(`[ingest] Level 1 embedding failed for cluster ${clusterId}: ${error.message}`);
-    }
-
-    level1Rows.push({
-      business_id: businessId,
-      level: 1,
-      cluster_id: clusterId,
-      content,
-      embedding,
-      source_chunk_ids: chunks.map((chunk) => chunk.id).filter(Boolean),
-    });
-  }
-
-  if (level1Rows.length > 0) {
-    await deleteSummaries(businessId, 1);
-    await insertSummaries(level1Rows);
-  }
-
-  return level1Rows;
-}
-
-async function buildLevel2Summary(level1Rows, businessId) {
-  const level1Summaries = level1Rows.map((row) => row.content).join('\n---\n');
-
-  const prompt = [
-    'Write a comprehensive 250-350 word business profile in prose (no bullets):',
-    '1. Core offering  2. Target customer  3. Differentiators  4. Pricing model',
-    '5. Getting started  6. Trust signals.',
-    "Must fully answer: 'what do you guys do?'",
-    `SECTION SUMMARIES: ${level1Summaries}`,
-  ].join('\n');
-
-  const content = await callLLM(prompt);
-
-  let embedding = null;
-  try {
-    const embeddings = await embedTexts([content]);
-    embedding = embeddings[0] || null;
-  } catch (error) {
-    console.warn('[ingest] Level 2 embedding failed:', error.message);
-  }
-
-  await deleteSummaries(businessId, 2);
-  await insertSummaries([
-    {
-      business_id: businessId,
-      level: 2,
-      content,
-      embedding,
-    },
-  ]);
-
-  return content;
-}
-
-async function extractAndSaveBusinessProfile(level2Summary, businessId) {
-  const prompt = [
-    'Using the business profile below, return ONLY valid JSON with no markdown:',
-    '{',
-    '  "primary_offering": "",',
-    '  "industry": "",',
-    '  "pricing_model": "",',
-    '  "brand_tone": "",',
-    '  "key_cta": "",',
-    '  "target_customer": ""',
-    '}',
-    `PROFILE: ${level2Summary}`,
-  ].join('\n');
-
-  const raw = await callLLM(prompt);
-  const jsonText = raw
-    .replace(/^```json\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/```$/i, '')
-    .trim();
-
-  const parsed = JSON.parse(jsonText);
-
-  await updateBusiness(businessId, {
-    primary_offering: parsed.primary_offering || null,
-    industry: parsed.industry || null,
-    pricing_model: parsed.pricing_model || null,
-    brand_tone: parsed.brand_tone || null,
-    key_cta: parsed.key_cta || null,
-    target_customer: parsed.target_customer || null,
-    last_ingested_at: new Date().toISOString(),
-  });
-}
-
-module.exports = { ingestNormalized, rebuildSummaries, reembedMissing, storeLevel0Chunks, buildSemanticChunks };
+module.exports = { ingestNormalized, reembedMissing, storeLevel0Chunks, buildSemanticChunks };

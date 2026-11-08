@@ -6,7 +6,6 @@ const express = require('express');
 const cors    = require('cors');
 const crypto  = require('node:crypto');
 
-const { evaluateAnswer } = require('./services/generator');
 const { runAgent }  = require('./services/agent');
 const { classifyExchange } = require('./services/guard');
 const { notifyUnanswered, sendMail, mailConfigured, appUrl } = require('./services/notify');
@@ -111,8 +110,13 @@ function limitAuth(req, res, next) {
 }
 const CHAT_PER_MINUTE = Number(process.env.CHAT_RATE_PER_MINUTE) || 20;
 const CHAT_PER_DAY = Number(process.env.CHAT_DAILY_LIMIT) || 2000;
-function limitChat(req, res, next) {
+async function limitChat(req, res, next) {
   const id = req.params.businessId;
+  if (!validBusinessId(id)) return next(); // the handler answers 400
+  try { await db.getClient(id); } catch (err) {
+    if (err.message === 'Business not found') return res.status(404).json({ error: 'Business not found' });
+    return next(err);
+  }
   if (!hit('chat:' + id + ':' + req.ip, CHAT_PER_MINUTE, 60 * 1000)) return res.status(429).json({ error: 'Too many messages. Wait a minute and try again.' });
   if (!hit('chat-day:' + id, CHAT_PER_DAY, 24 * 60 * 60 * 1000)) return res.status(429).json({ error: 'This assistant has reached its daily message limit.' });
   next();
@@ -158,7 +162,7 @@ app.post('/api/auth/signup', limitAuth, asyncRoute(async function (req, res) {
 app.post('/api/auth/login', limitAuth, asyncRoute(async function (req, res) {
   const { email, password } = credentials(req.body || {});
   if (email.length > 254 || password.length > 1024) return res.status(401).json({ error: 'Invalid email or password.' });
-  if (!hit('login:' + email, 10, 15 * 60 * 1000)) return res.status(429).json({ error: 'Too many attempts. Try again later.' });
+  if (!hit('login:' + email + ':' + req.ip, 10, 15 * 60 * 1000)) return res.status(429).json({ error: 'Too many attempts. Try again later.' });
   await auth.ensureAuthSchema();
   const result = await db.query('SELECT id, email, password_hash FROM users WHERE email = $1', [email]);
   const user = result.rows[0];
@@ -446,8 +450,6 @@ app.delete('/api/sources/:businessId/:documentId', requireAdmin, asyncRoute(asyn
   });
 }));
 
-var EVAL_SAMPLE_RATE = process.env.EVAL_SAMPLE_RATE !== undefined ? Number(process.env.EVAL_SAMPLE_RATE) : 0.1;
-
 function validBusinessId(value) {
   return typeof value === 'string' && /^[1-9]\d{0,18}$/.test(value) && BigInt(value) <= 9223372036854775807n;
 }
@@ -474,7 +476,8 @@ async function handleChatStream(req, res, surface) {
     });
 
     var closed = false;
-    res.on('close', function () { closed = true; });
+    var controller = new AbortController();
+    res.on('close', function () { closed = true; if (!res.writableEnded) controller.abort(); });
     var sentText = false;
     var send = function (obj) {
       if (obj.token) sentText = true;
@@ -484,6 +487,7 @@ async function handleChatStream(req, res, surface) {
     try {
       var business = await traces.stage('business', () => db.getClient(businessId));
       var history  = await traces.stage('history', () => db.getHistory(businessId, sessionId, surface));
+      await db.saveMessage(businessId, sessionId, 'visitor', message, { channel: surface });
 
       var result = await traces.stage('agent', () => runAgent({
         businessId: businessId,
@@ -492,6 +496,7 @@ async function handleChatStream(req, res, surface) {
         sessionId:  sessionId,
         history:    history,
         message:    message,
+        signal:     controller.signal,
         onToken:    function (t) { send({ token: t }); },
       }));
 
@@ -515,6 +520,7 @@ async function handleChatStream(req, res, surface) {
       recordExchange(businessId, sessionId, surface, message, result, business, classification || undefined);
       return result;
     } catch (err) {
+      if (controller.signal.aborted) return { source: 'aborted' }; // client left; not a provider error
       traces.recordError(err);
       console.error(JSON.stringify({ event: 'rag.request_error', trace_id: trace.id, message: err.message }));
       if (!sentText) send({ token: "I'm having trouble right now. Please try again." });
@@ -532,7 +538,6 @@ function recordExchange(businessId, sessionId, surface, message, result, busines
         const topicContext = await db.getClassificationContext(businessId);
         classification = await classifyExchange({ question: message, answer: result.response, chunks: result.chunks, business, topicContext, result, confidence: result.confidence });
       }
-      await db.saveMessage(businessId, sessionId, 'visitor', message, { channel: surface });
       await db.saveMessage(businessId, sessionId, 'assistant', result.response, {
         confidence: result.confidence,
         escalated:  result.escalated,
@@ -545,20 +550,6 @@ function recordExchange(businessId, sessionId, surface, message, result, busines
         if (classification.status === 'unanswered') await notifyUnanswered({ business, item: inserted.rows[0] });
       }
 
-      if (surface === 'widget' && !result.escalated && result.chunks.length > 0 && Math.random() < EVAL_SAMPLE_RATE) {
-        var contents = result.chunks.map(function (c) { return c.content; });
-        var scores = await evaluateAnswer({ query: message, answer: result.response, chunks: contents });
-        await db.insertEvalLog({
-          business_id: businessId, session_id: sessionId,
-          query: message, answer: result.response,
-          retrieved_chunks: JSON.stringify(result.chunks),
-          faithfulness_score: scores.faithfulness,
-          answer_relevance_score: scores.answer_relevance,
-          context_precision_score: scores.context_precision,
-          overall_score: (scores.faithfulness !== null && scores.answer_relevance !== null) ? (scores.faithfulness + scores.answer_relevance + (scores.context_precision || 0)) / 3 : null,
-          flagged_hallucination: scores.has_hallucination,
-        });
-      }
     } catch (asyncErr) {
       console.error('Chat side-effects failed:', asyncErr.message);
     }
@@ -649,10 +640,6 @@ app.get('/api/dashboard/:businessId/leads', requireAdmin, asyncRoute(async funct
   }));
 }));
 
-app.get('/api/dashboard/:businessId/questions', requireAdmin, asyncRoute(async function (req, res) {
-  res.json(await db.getTopQuestions(req.params.businessId, Number(req.query.days) || 7));
-}));
-
 app.get('/api/keys/:businessId', requireAdmin, asyncRoute(async function (req, res) {
   res.set('Cache-Control', 'no-store').json({ keys: await db.listApiKeys(req.params.businessId) });
 }));
@@ -714,10 +701,13 @@ app.post('/api/v1/ask', requireApiKey, asyncRoute(async function (req, res) {
   var businessId = String(req.businessId);
 
   return traces.runTrace({ businessId, sessionId, surface: 'api', query: question }, async function (trace) {
+    var controller = new AbortController();
+    res.on('close', function () { if (!res.writableEnded) controller.abort(); });
     try {
       var business = await traces.stage('business', () => db.getClient(businessId));
       var history = await traces.stage('history', () => db.getHistory(businessId, sessionId, 'api'));
-      var result = await traces.stage('agent', () => runAgent({ businessId, business, surface: 'api', sessionId, history, message: question }));
+      await db.saveMessage(businessId, sessionId, 'visitor', question, { channel: 'api' });
+      var result = await traces.stage('agent', () => runAgent({ businessId, business, surface: 'api', sessionId, history, message: question, signal: controller.signal }));
       var marked = /^\s*\[UNANSWERED\]\s*:?\s*/i;
       if (marked.test(result.response || '')) result = { ...result, response: result.response.replace(marked, ''), escalated: true };
       var topicContext = await db.getClassificationContext(businessId);
@@ -734,6 +724,7 @@ app.post('/api/v1/ask', requireApiKey, asyncRoute(async function (req, res) {
       recordExchange(businessId, sessionId, 'api', question, result, business, classification);
       return result;
     } catch (err) {
+      if (controller.signal.aborted) return { source: 'aborted' }; // client left; not a provider error
       traces.recordError(err);
       console.error(JSON.stringify({ event: 'rag.request_error', trace_id: trace.id, message: err.message }));
       res.status(502).json({ error: 'The model provider failed to answer. Try again.', traceId: trace.id });
@@ -776,7 +767,7 @@ async function prepareDatabase() {
   embedCfg.dim = dim;
   if (await db.ensureSchema(dim)) console.log('[db] embedding model changed; re-embedding stored content');
   const count = await reembedMissing();
-  if (count) console.log('[db] embedded ' + count + ' stored chunks and summaries');
+  if (count) console.log('[db] embedded ' + count + ' stored chunks');
 }
 
 function bootSchema(attempt) {

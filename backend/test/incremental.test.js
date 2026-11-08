@@ -25,7 +25,7 @@ test('storeLevel0Chunks is incremental: add/keep/purge by content hash', async (
   assert.strictEqual(r1.unchanged, 0);
   assert.strictEqual(r1.removed, 0);
 
-  const embA_before = (await db.getAllChunks(bid)).find((c) => c.content.includes('A')).embedding;
+  const embA_before = ((await db.query('SELECT chunk_text AS content, embedding FROM chunks WHERE business_id = $1', [bid])).rows).find((c) => c.content.includes('A')).embedding;
 
   const r2 = await ingest.storeLevel0Chunks([
     { content: 'A alpha',   source_url: 'u', token_count: 1, embedding: mkVec(999) },
@@ -36,12 +36,12 @@ test('storeLevel0Chunks is incremental: add/keep/purge by content hash', async (
   assert.strictEqual(r2.unchanged, 1, 'A is detected as unchanged');
   assert.strictEqual(r2.removed, 2, 'old B hash + deleted C are removed');
 
-  const after = await db.getAllChunks(bid);
+  const after = (await db.query('SELECT chunk_text AS content, embedding FROM chunks WHERE business_id = $1', [bid])).rows;
   assert.strictEqual(after.length, 2, 'only A + Bv2 remain');
   assert.ok(!after.some((c) => c.content.includes('C')), 'C is purged');
 
   const embA_after = after.find((c) => c.content.includes('A')).embedding;
   assert.strictEqual(embA_after, embA_before, 'unchanged chunk keeps its original embedding');
 
-  await db.deleteChunksByBusiness(bid);
+  await db.query('DELETE FROM chunks WHERE business_id = $1', [bid]);
 });

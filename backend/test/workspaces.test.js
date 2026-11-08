@@ -9,6 +9,8 @@ const crypto = require('node:crypto');
 test('workspace settings, inbox, ownership and deletion', { skip: !process.env.AUTH_TEST_DATABASE_URL }, async () => {
   process.env.DATABASE_URL = process.env.AUTH_TEST_DATABASE_URL;
   process.env.ADMIN_TOKEN = 'workspaces-test-admin';
+  // Embedding failures now fail the ingest; stub before ingest.js captures embedTexts.
+  require('../src/services/llm').embedTexts = async (texts) => texts.map(() => null);
   const app = require('../src/server');
   const db = require('../src/db');
   const { notifyUnanswered } = require('../src/services/notify');

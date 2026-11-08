@@ -73,3 +73,23 @@ test('trace storage and pagination always scope queries to the requested bot', a
   assert.ok(calls.some((c) => c.sql.includes('pg_advisory_xact_lock')));
   assert.equal(calls.at(-1).sql, 'COMMIT');
 });
+
+test('retrieval traces bound chunk text without changing returned results', async (t) => {
+  const { retrieve } = require('../src/services/retriever');
+  const original = db.matchChunksFts;
+  const content = 'x'.repeat(500);
+  db.matchChunksFts = async () => [{ id: '1', content, source_url: 'https://example.com', rank: 0.5, extra: 'omitted' }];
+  t.after(() => { db.matchChunksFts = original; });
+  let saved;
+  const result = await traces.runTrace({ businessId: 1, sessionId: 's', surface: 'widget', query: 'overview' },
+    () => retrieve(1, 'overview', { dense: false }),
+    { save: async (trace) => { saved = trace; }, log: () => {} });
+  assert.equal(result.chunks[0].content, content);
+  assert.equal(result.candidates[0].content, content);
+  const recorded = saved.retrievals[0];
+  for (const row of [recorded.chunks[0], recorded.candidates[0], recorded.stageCandidates.lexicalRaw[0]]) {
+    assert.equal(row.content, content.slice(0, 200));
+    assert.equal(row.extra, undefined);
+    assert.equal(row.id, '1');
+  }
+});
