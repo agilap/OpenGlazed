@@ -64,6 +64,13 @@ export function useWorkspace(businessId) {
     }).catch(() => {});
   }, []);
   useEffect(() => { reload(); }, [reload, signedIn]);
+  // Keep counts fresh on every page while a document is still being indexed or removed.
+  const indexing = documents.some((doc) => ['queued', 'processing', 'deleting'].includes(doc.status));
+  useEffect(() => {
+    if (!indexing) return undefined;
+    const timer = setInterval(() => refreshDocuments().catch(() => {}), 3000);
+    return () => clearInterval(timer);
+  }, [indexing, refreshDocuments]);
   useEffect(() => { if (!businessId) return; let active = true; authedFetch(`${API_BASE}/api/inbox/${businessId}?status=unanswered&state=open`).then((r) => r.ok ? r.json() : null).then((data) => { if (active && data?.counts) setInboxCounts(data.counts); }).catch(() => {}); return () => { active = false; }; }, [businessId, authedFetch, signedIn]);
   return { business, stats, workspaces, inboxCounts, setInboxCounts, conversations, leads, documents, status, error, signedIn, user, needSignIn, setNeedSignIn, authedFetch, reload, refreshDocuments, setDocuments };
 }

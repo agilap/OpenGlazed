@@ -428,7 +428,6 @@ textarea {
 .account-list a:hover { background: var(--gz-wash); }
 .account-list strong { font-weight: 500; }
 .account-list small { display: block; margin-top: 4px; color: var(--gz-muted); font: 12px var(--gz-mono); overflow-wrap: anywhere; }
-.account-status { flex: none; color: var(--gz-muted); font: 12px var(--gz-mono); }
 .account-empty { padding: 32px; border-style: dashed; border-color: var(--gz-line-strong); }
 .account-empty h2 { margin: 0 0 8px; font-size: 18px; font-weight: 500; }
 .account-empty p { color: var(--gz-muted); font-size: 14px; line-height: 1.5; }

@@ -53,6 +53,7 @@ export default function EmbeddableWidget({ businessId, config = {} }) {
   const nearBottomRef = useRef(true);
   const requestRef = useRef(null);
   const queuedRef = useRef(false);
+  const [queued, setQueued] = useState(false);
 
   useEffect(() => () => requestRef.current?.abort(), []);
   const [greetingReady, setGreetingReady] = useState(false);
@@ -143,7 +144,7 @@ export default function EmbeddableWidget({ businessId, config = {} }) {
           {
             role: 'assistant',
             isGreeting: true,
-            content: config.greeting || `Hi! I answer questions from ${businessName}'s documents. What would you like to know?`,
+            content: config.greeting || `Hi! Ask me anything about ${businessName}.`,
             time: new Date(),
             source: 'greeting',
           },
@@ -245,7 +246,7 @@ export default function EmbeddableWidget({ businessId, config = {} }) {
     if (!sessionId || !outgoing) return;
     if (busyRef.current) {
       // The reply is still being checked; send this as soon as it finishes instead of dropping it.
-      if (!retry) queuedRef.current = true;
+      if (!retry) { queuedRef.current = true; setQueued(true); }
       return;
     }
 
@@ -313,6 +314,7 @@ export default function EmbeddableWidget({ businessId, config = {} }) {
       inputRef.current?.focus();
       const pending = queuedRef.current && inputRef.current?.value;
       queuedRef.current = false;
+      setQueued(false);
       if (pending && pending.trim()) setTimeout(() => sendMessage(null, '', pending));
     }
   }
@@ -396,6 +398,7 @@ export default function EmbeddableWidget({ businessId, config = {} }) {
         .gzd-widget-root[data-theme='dark'] :is(.gzd-time,.gzd-powered,.gzd-gate p,.gzd-gate label,.gzd-citations) { color: #d4d4d8; }
         .gzd-widget-root[data-theme='dark'] .gzd-citation-src { color: #a5b4fc; }
         .gzd-retry { margin: 0 16px 12px; min-height: 44px; }
+        .gzd-queued { margin: 0 16px 6px; font-size: 12px; color: #6b6b78; }
         .gzd-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
         @media (max-width: 400px) { .gzd-messages { padding: 16px; } .gzd-widget-root input { font-size: 16px; } }
         @keyframes gzd-blink { 50% { opacity: 0; } }
@@ -458,6 +461,7 @@ export default function EmbeddableWidget({ businessId, config = {} }) {
       </section>
 
       <div className="gzd-status" role="status" aria-live="polite">{isTyping ? 'Assistant is responding…' : messages.at(-1)?.role === 'assistant' && !messages.at(-1)?.isGreeting ? 'Response ready.' : ''}</div>
+      {queued && <p className="gzd-queued">Your message will send after this reply.</p>}
       {shouldShowGate && (gateExpanded ? (
         <form className="gzd-gate" onSubmit={startChat}>
           <h2>Want a follow-up?</h2>

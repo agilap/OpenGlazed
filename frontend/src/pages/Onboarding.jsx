@@ -198,7 +198,7 @@ export default function Onboarding() {
           <div className="ob2-card ob2-progress">
             <p className="ob2-meta ob2-status"><span className="ob2-dot" aria-hidden="true" style={{ background: ready ? '#34d399' : documents.length ? '#fbbf24' : '#8a8a96' }} />{name} / {ready ? (settled ? 'ready' : 'indexing') : documents.length ? 'indexing' : 'empty'}</p>
             <h2>{ready && settled ? 'Your documents are ready' : 'Add your documents'}</h2>
-            <DocumentLibrary businessId={businessId} tone="dark" onDocuments={setDocuments} onUnauthorized={() => setNeedSignIn(true)} />
+            <DocumentLibrary businessId={businessId} tone="dark" onDocuments={setDocuments} onUnauthorized={() => navigate('/login?next=' + encodeURIComponent(`/dashboard/${businessId}/documents`))} />
             {ready && <>
               <div className="ob2-embed-row"><span>Embed snippet</span><button className="ob2-copy" type="button" onClick={handleCopy}>{copyLabel}</button></div>
               <pre className="ob2-code">{embedSnippet}</pre>

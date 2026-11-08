@@ -37,7 +37,6 @@
 .account-list a:hover { background: var(--gz-wash); }
 .account-list strong { font-weight: 500; }
 .account-list small { display: block; margin-top: 4px; color: var(--gz-muted); font: 12px var(--gz-mono); overflow-wrap: anywhere; }
-.account-status { flex: none; color: var(--gz-muted); font: 12px var(--gz-mono); }
 .account-empty { padding: 32px; border-style: dashed; border-color: var(--gz-line-strong); }
 .account-empty h2 { margin: 0 0 8px; font-size: 18px; font-weight: 500; }
 .account-empty p { color: var(--gz-muted); font-size: 14px; line-height: 1.5; }
@@ -54,11 +53,6 @@
 .account-card:hover { transform: translateY(-2px); border-color: var(--gz-line-strong); background: var(--gz-wash); }
 .account-card strong { font-size: 17px; font-weight: 600; overflow-wrap: anywhere; }
 .account-card small { color: var(--gz-muted); font: 12px var(--gz-mono); }
-.account-status { display: inline-flex; align-items: center; gap: 8px; overflow-wrap: anywhere; }
-.account-status-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--gz-dim); }
-.account-status-dot--ready { background: #047857; }
-.account-status-dot--indexing, .account-status-dot--pending { background: #a15c07; }
-.account-status-dot--error, .account-status-dot--failed { background: #c0362c; }
 .account-card-new { justify-content: center; align-items: center; border-style: dashed; border-color: var(--gz-line-strong); font-weight: 600; }
 .account-skeleton { min-height: 160px; border-radius: 8px; background: var(--gz-line); animation: account-pulse 1.2s ease-in-out infinite alternate; }
 .account-spinner { animation: account-spin .8s linear infinite; }
