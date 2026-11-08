@@ -461,7 +461,7 @@ export default function EmbeddableWidget({ businessId, config = {} }) {
       </section>
 
       <div className="gzd-status" role="status" aria-live="polite">{isTyping ? 'Assistant is responding…' : messages.at(-1)?.role === 'assistant' && !messages.at(-1)?.isGreeting ? 'Response ready.' : ''}</div>
-      {queued && <p className="gzd-queued">Your message will send after this reply.</p>}
+      {queued && <p className="gzd-queued" role="status">Your message will send after this reply.</p>}
       {shouldShowGate && (gateExpanded ? (
         <form className="gzd-gate" onSubmit={startChat}>
           <h2>Want a follow-up?</h2>
