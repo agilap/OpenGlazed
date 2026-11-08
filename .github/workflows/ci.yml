@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: glazed
+          POSTGRES_PASSWORD: glazed
+          POSTGRES_DB: glazed
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U glazed -d glazed"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://glazed:glazed@localhost:5432/glazed
+      AUTH_TEST_DATABASE_URL: postgresql://glazed:glazed@localhost:5432/glazed
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - name: Create schema
+        run: psql -v ON_ERROR_STOP=1 -q -f db/init.sql "$DATABASE_URL"
+      - run: npm test -w backend
+      - run: npm run build -w frontend

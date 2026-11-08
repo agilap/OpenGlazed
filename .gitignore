@@ -69,7 +69,8 @@ dist/
 .vite/
 # oh-my-claudecode runtime state
 .omc/
-.github/
+.github/*
+!.github/workflows/
 
 # Local agent configuration
 /.agents/
