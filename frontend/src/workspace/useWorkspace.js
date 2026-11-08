@@ -42,12 +42,12 @@ export function useWorkspace(businessId) {
     setNeedSignIn(false);
     setStatus('loading');
     try {
-      const [dashboard, nextStats, sessions, nextLeads, sources, ingest] = await Promise.all([
+      const [dashboard, nextStats, sessions, nextLeads, sources] = await Promise.all([
         request(`/api/businesses/${businessId}/dashboard`), request(`/api/dashboard/${businessId}/stats`),
         request(`/api/dashboard/${businessId}/sessions`), request(`/api/dashboard/${businessId}/leads`),
-        request(`/api/sources/${businessId}`), request(`/api/ingest/${businessId}/status`),
+        request(`/api/sources/${businessId}`),
       ]);
-      setBusiness({ ...dashboard.business, ingest_status: ingest.status, ingest_progress: ingest.ingest_progress });
+      setBusiness(dashboard.business);
       setStats({ documents: nextStats.documents ?? null, questionsAnswered: nextStats.questionsAnswered ?? null, unansweredRate: nextStats.unansweredRate ?? null, medianLatencyMs: nextStats.medianLatencyMs ?? null, totalLeads: nextStats.totalLeads ?? null, offTopic: nextStats.offTopic ?? null });
       setConversations(Array.isArray(sessions) ? sessions : []);
       setLeads(Array.isArray(nextLeads) ? nextLeads : []);
@@ -65,13 +65,5 @@ export function useWorkspace(businessId) {
   }, []);
   useEffect(() => { reload(); }, [reload, signedIn]);
   useEffect(() => { if (!businessId) return; let active = true; authedFetch(`${API_BASE}/api/inbox/${businessId}?status=unanswered&state=open`).then((r) => r.ok ? r.json() : null).then((data) => { if (active && data?.counts) setInboxCounts(data.counts); }).catch(() => {}); return () => { active = false; }; }, [businessId, authedFetch, signedIn]);
-  useEffect(() => {
-    if (!businessId) return undefined;
-    const timer = setInterval(() => {
-      request(`/api/ingest/${businessId}/status`).then((ingest) => setBusiness((current) => current ? { ...current, ingest_status: ingest.status, ingest_progress: ingest.ingest_progress } : current)).catch(() => {});
-      refreshDocuments().catch(() => {});
-    }, 5000);
-    return () => clearInterval(timer);
-  }, [businessId, request, refreshDocuments]);
   return { business, stats, workspaces, inboxCounts, setInboxCounts, conversations, leads, documents, status, error, signedIn, user, needSignIn, setNeedSignIn, authedFetch, reload, refreshDocuments, setDocuments };
 }

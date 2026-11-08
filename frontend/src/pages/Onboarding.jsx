@@ -13,7 +13,6 @@ export default function Onboarding() {
   const [documents, setDocuments] = useState([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [needSignIn, setNeedSignIn] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
   const celebratedRef = useRef(false);
   const navigate = useNavigate();
@@ -72,8 +71,8 @@ export default function Onboarding() {
         body: JSON.stringify({ name }),
       });
       if (response.status === 401) {
-        setStatus('');
-        setNeedSignIn(true);
+        // Signed out: create the account first, then come back to a prefilled workspace form.
+        navigate(`/signup?next=${encodeURIComponent('/workspaces/new?name=' + encodeURIComponent(name.trim()))}`);
         return;
       }
       const data = await response.json();
@@ -190,9 +189,8 @@ export default function Onboarding() {
             <h2>Name your workspace</h2>
             <label htmlFor="business-name">Workspace name</label>
             <input id="business-name" placeholder="Acme policies" value={name} onChange={(e) => setName(e.target.value)} maxLength={120} required />
-            {needSignIn && <p className="ob2-error" role="alert"><a href="/login">Sign in</a> or <a href="/signup">create an account</a> to create a workspace.</p>}
             <button className="ob2-submit" type="submit" disabled={loading}>{loading ? 'Creating…' : 'Continue'}</button>
-            <p className="ob2-note">Next you'll add the documents your assistant answers from.</p>
+            <p className="ob2-note">{signedIn ? "Next you'll add the documents your assistant answers from." : "Next you'll create a free account, then add your documents."}</p>
             {status && <p className="ob2-meta" role="status">{status}</p>}
             {error && <p className="ob2-error" role="alert">{error}</p>}
           </form>

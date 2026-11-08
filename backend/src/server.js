@@ -173,7 +173,7 @@ app.post('/api/auth/login', limitAuth, asyncRoute(async function (req, res) {
 app.get('/api/auth/me', asyncRoute(async function (req, res) {
   const user = await auth.getUser(req);
   if (!user) return res.status(401).json({ error: 'Sign in required' });
-  const businesses = await db.query("SELECT b.id, b.name, b.url, b.ingest_status, (SELECT count(*)::int FROM documents d WHERE d.business_id = b.id AND d.status = 'ready') AS document_count, (SELECT count(*)::int FROM inbox_items i WHERE i.business_id = b.id AND i.status = 'unanswered' AND i.resolved_at IS NULL) AS open_unanswered FROM businesses b WHERE b.owner_id = $1 ORDER BY b.id DESC", [user.id]);
+  const businesses = await db.query("SELECT b.id, b.name, b.url, (SELECT count(*)::int FROM documents d WHERE d.business_id = b.id AND d.status = 'ready') AS document_count, (SELECT count(*)::int FROM inbox_items i WHERE i.business_id = b.id AND i.status = 'unanswered' AND i.resolved_at IS NULL) AS open_unanswered FROM businesses b WHERE b.owner_id = $1 ORDER BY b.id DESC", [user.id]);
   res.set('Cache-Control', 'no-store').json({ user: publicUser(user), businesses: businesses.rows });
 }));
 app.get('/api/auth/config', function (req, res) { res.json({ passwordReset: mailConfigured() }); });
@@ -392,15 +392,6 @@ app.get('/api/businesses/:id/dashboard', requireAdmin, asyncRoute(async function
   return res.json({ business: business });
 }));
 
-app.get('/api/ingest/:businessId/status', requireAdmin, asyncRoute(async function (req, res) {
-  var data = await db.getBusinessStatusCols(req.params.businessId);
-
-  res.json({
-    status:          data.ingest_status  || 'unknown',
-    ingest_progress: data.ingest_progress || 0,
-  });
-}));
-
 const MAX_DOCUMENT_BYTES = 18 * 1024 * 1024;
 
 app.post('/api/sources/:businessId', requireAdmin, asyncRoute(async function (req, res) {
@@ -428,7 +419,8 @@ async function acceptDocument(businessId, body, res) {
     payload.text = body.text;
   }
 
-  var document = await db.createDocument(businessId, filename || 'Pasted text ' + new Date().toISOString().slice(0, 10), sourceType);
+  var firstLine = filename ? '' : body.text.trim().split('\n')[0].replace(/^#+\s*/, '').trim().slice(0, 80);
+  var document = await db.createDocument(businessId, filename || firstLine || 'Pasted text ' + new Date().toISOString().slice(0, 10), sourceType);
   res.status(202).json({ document: document });
   ingestDocument(businessId, document, payload).catch(function (err) {
     console.error('[sources] ingest failed for', businessId, document.id, err.message);
@@ -487,7 +479,6 @@ async function handleChatStream(req, res, surface) {
     try {
       var business = await traces.stage('business', () => db.getClient(businessId));
       var history  = await traces.stage('history', () => db.getHistory(businessId, sessionId, surface));
-      await db.saveMessage(businessId, sessionId, 'visitor', message, { channel: surface });
 
       var result = await traces.stage('agent', () => runAgent({
         businessId: businessId,
@@ -501,10 +492,22 @@ async function handleChatStream(req, res, surface) {
       }));
 
       // Classify before the final event so non-answers carry no sources and can offer a follow-up.
+      // Sources go out now; the final event hides them if classification says the question went unanswered.
+      if (!result.escalated && result.citations.length) send({ citations: result.citations });
       var classification = await traces.stage('classify', async function () {
         return classifyExchange({ question: message, answer: result.response, chunks: result.chunks, business, topicContext: await db.getClassificationContext(businessId), result, confidence: result.confidence });
       }).catch(function () { return null; });
-      var status = classification ? classification.status : null;
+      if (!classification) {
+        const topicContext = await db.getClassificationContext(businessId);
+        classification = await classifyExchange({ question: message, answer: result.response, chunks: result.chunks, business, topicContext, result, confidence: result.confidence });
+      }
+      if (controller.signal.aborted) return { source: 'aborted' };
+      var status = classification.status;
+      await db.saveMessage(businessId, sessionId, 'visitor', message, { channel: surface });
+      await db.saveMessage(businessId, sessionId, 'assistant', result.response, {
+        confidence: result.confidence, escalated: result.escalated, source: result.source,
+        channel: surface, answer_status: status,
+      });
       send({
         done: true,
         ...(surface === 'widget' ? { followUp: Boolean(result.escalated || status === 'unanswered' || /^\s*\[UNANSWERED\]/i.test(result.response || '')) } : {}),
@@ -538,13 +541,6 @@ function recordExchange(businessId, sessionId, surface, message, result, busines
         const topicContext = await db.getClassificationContext(businessId);
         classification = await classifyExchange({ question: message, answer: result.response, chunks: result.chunks, business, topicContext, result, confidence: result.confidence });
       }
-      await db.saveMessage(businessId, sessionId, 'assistant', result.response, {
-        confidence: result.confidence,
-        escalated:  result.escalated,
-        source:     result.source,
-        channel:    surface,
-        answer_status: classification.status,
-      });
       if (['unanswered', 'off_topic', 'blocked'].includes(classification.status)) {
         const inserted = await db.query('INSERT INTO inbox_items (business_id, session_id, channel, status, question, answer, reason) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *', [businessId, sessionId, surface, classification.status, message, result.response, classification.reason]);
         if (classification.status === 'unanswered') await notifyUnanswered({ business, item: inserted.rows[0] });
@@ -706,12 +702,17 @@ app.post('/api/v1/ask', requireApiKey, asyncRoute(async function (req, res) {
     try {
       var business = await traces.stage('business', () => db.getClient(businessId));
       var history = await traces.stage('history', () => db.getHistory(businessId, sessionId, 'api'));
-      await db.saveMessage(businessId, sessionId, 'visitor', question, { channel: 'api' });
       var result = await traces.stage('agent', () => runAgent({ businessId, business, surface: 'api', sessionId, history, message: question, signal: controller.signal }));
       var marked = /^\s*\[UNANSWERED\]\s*:?\s*/i;
       if (marked.test(result.response || '')) result = { ...result, response: result.response.replace(marked, ''), escalated: true };
       var topicContext = await db.getClassificationContext(businessId);
       var classification = await classifyExchange({ question, answer: result.response, chunks: result.chunks, business, topicContext, result, confidence: result.confidence });
+      if (controller.signal.aborted) return { source: 'aborted' };
+      await db.saveMessage(businessId, sessionId, 'visitor', question, { channel: 'api' });
+      await db.saveMessage(businessId, sessionId, 'assistant', result.response, {
+        confidence: result.confidence, escalated: result.escalated, source: result.source,
+        channel: 'api', answer_status: classification.status,
+      });
       res.json({
         answer: result.response,
         citations: result.citations.map(function (c) { return { index: c.index, source: c.source, excerpt: c.content }; }),

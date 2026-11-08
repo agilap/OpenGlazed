@@ -50,18 +50,6 @@ async function getClassificationContext(businessId) {
   return rows[0];
 }
 
-async function updateClientStatus(businessId, status) {
-  await pool.query('UPDATE businesses SET ingest_status = $1 WHERE id = $2', [status, businessId]);
-  clearBusinessCache(businessId);
-  return null;
-}
-
-async function updateIngestProgress(businessId, progress) {
-  await pool.query('UPDATE businesses SET ingest_progress = $1 WHERE id = $2', [progress, businessId]);
-  clearBusinessCache(businessId);
-  return null;
-}
-
 async function saveMessage(businessId, sessionId, role, content, metadata = {}) {
   await pool.query(
     `INSERT INTO messages (business_id, session_id, role, content, confidence, escalated, source, channel, answer_status)
@@ -296,14 +284,6 @@ async function updateBusiness(businessId, fields) {
   return null;
 }
 
-async function getBusinessStatusCols(businessId) {
-  const { rows } = await pool.query(
-    'SELECT ingest_status, ingest_progress FROM businesses WHERE id = $1',
-    [businessId]
-  );
-  return rows[0] || {};
-}
-
 async function deleteChunksBySource(businessId, sourceRef) {
   await pool.query(
     'DELETE FROM chunks WHERE business_id = $1 AND source_ref = $2',
@@ -370,8 +350,6 @@ module.exports = {
   clearBusinessCache,
   getClient,
   getClassificationContext,
-  updateClientStatus,
-  updateIngestProgress,
   saveMessage,
   saveLead,
   getLeads,
@@ -383,7 +361,6 @@ module.exports = {
   getBusinessById,
   getBusinessProfileCols,
   updateBusiness,
-  getBusinessStatusCols,
   deleteChunksBySource,
   getStoredHashes,
   deleteChunksBySourceExcept,

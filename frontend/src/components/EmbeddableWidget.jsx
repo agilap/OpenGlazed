@@ -52,6 +52,7 @@ export default function EmbeddableWidget({ businessId, config = {} }) {
   const busyRef = useRef(false);
   const nearBottomRef = useRef(true);
   const requestRef = useRef(null);
+  const queuedRef = useRef(false);
 
   useEffect(() => () => requestRef.current?.abort(), []);
   const [greetingReady, setGreetingReady] = useState(false);
@@ -237,19 +238,21 @@ export default function EmbeddableWidget({ businessId, config = {} }) {
     }
   }
 
-  async function sendMessage(event, retry = '') {
+  async function sendMessage(event, retry = '', queued = '') {
     event?.preventDefault();
-    const outgoing = (retry || message).trim();
+    const outgoing = (retry || queued || message).trim();
 
-    if (!sessionId || !outgoing || busyRef.current) {
+    if (!sessionId || !outgoing) return;
+    if (busyRef.current) {
+      // The reply is still being checked; send this as soon as it finishes instead of dropping it.
+      if (!retry) queuedRef.current = true;
       return;
     }
 
     busyRef.current = true;
     nearBottomRef.current = true;
     setRetryMessage('');
-    const nextMessages = retry ? messages : [...messages, { role: 'user', content: outgoing, time: new Date() }];
-    setMessages(nextMessages);
+    if (!retry) setMessages((prev) => [...prev, { role: 'user', content: outgoing, time: new Date() }]);
     setMessage('');
     setIsTyping(true);
     setError('');
@@ -283,6 +286,8 @@ export default function EmbeddableWidget({ businessId, config = {} }) {
           setMessages((prev) =>
             prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + evt.token } : m))
           );
+        } else if (evt.citations && !evt.done) {
+          setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, streaming: false, citations: evt.citations } : m)));
         } else if (evt.done) {
           setMessages((prev) =>
             prev.map((m) =>
@@ -306,6 +311,9 @@ export default function EmbeddableWidget({ businessId, config = {} }) {
       busyRef.current = false;
       setIsTyping(false);
       inputRef.current?.focus();
+      const pending = queuedRef.current && inputRef.current?.value;
+      queuedRef.current = false;
+      if (pending && pending.trim()) setTimeout(() => sendMessage(null, '', pending));
     }
   }
 
@@ -420,7 +428,7 @@ export default function EmbeddableWidget({ businessId, config = {} }) {
                   </div>
                   {msg.interrupted && <span className="gzd-time">Response interrupted</span>}
                   {!isUser && !msg.escalated && <CitationList citations={msg.citations} />}
-                  <div className={`gzd-time ${isUser ? 'user' : 'assistant'}`}>{formatTime(msg.time)}</div>
+                  {!msg.isGreeting && <div className={`gzd-time ${isUser ? 'user' : 'assistant'}`}>{formatTime(msg.time)}</div>}
                 </div>
               </div>
 
@@ -453,7 +461,7 @@ export default function EmbeddableWidget({ businessId, config = {} }) {
       {shouldShowGate && (gateExpanded ? (
         <form className="gzd-gate" onSubmit={startChat}>
           <h2>Want a follow-up?</h2>
-          <p>{followUp ? "I couldn't find that in the documents. Leave your email and the team will follow up." : "Leave your email and we'll get back to you."}</p>
+          <p>{followUp ? "I don't have that detail yet. Leave your email and the team will follow up." : "Leave your email and we'll get back to you."}</p>
           <div className="gzd-gate-fields">
             <input aria-label="Name (optional)" placeholder="Name (optional)" value={name} onChange={(e) => setName(e.target.value)} />
             <input aria-label="Email" type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required />
@@ -477,7 +485,7 @@ export default function EmbeddableWidget({ businessId, config = {} }) {
               value={message}
               onChange={(e) => setMessage(e.target.value)}
             />
-            <button className="gzd-send" type="submit" disabled={!message.trim() || isTyping || !sessionId} aria-label="Send message">
+            <button className="gzd-send" type="submit" disabled={!message.trim() || !sessionId} aria-label="Send message">
               <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M5 12H19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                 <path d="M13 6L19 12L13 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />

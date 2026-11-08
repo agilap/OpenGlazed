@@ -112,6 +112,7 @@ export default function TeamChat() {
       if (!response.ok || !response.body) throw new Error(response.status === 401 ? 'Admin token required.' : 'Request failed.');
       await readChatStream(response, (evt) => {
         if (evt.token) updateLast((m) => ({ ...m, content: m.content + evt.token }));
+        else if (evt.citations && !evt.done) updateLast((m) => ({ ...m, citations: evt.citations }));
         else if (evt.done) updateLast((m) => ({ ...m, streaming: false, citations: evt.citations || [] }));
       });
       loadThreads();

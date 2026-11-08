@@ -39,7 +39,7 @@ test('a failed query returns 500 and the server stays up', async (t) => {
 
   const auth = { Authorization: 'Bearer test' };
   const failing = [
-    ['GET', '/api/ingest/1/status', auth],
+    ['GET', '/api/dashboard/1/stats', auth],
     ['GET', '/api/businesses/1', {}],
     ['GET', '/api/businesses/1/dashboard', auth],
     ['POST', '/api/sources/1', auth],

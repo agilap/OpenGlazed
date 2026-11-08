@@ -2,8 +2,6 @@
 
 const crypto = require('crypto');
 const {
-  updateClientStatus,
-  updateIngestProgress,
   getStoredHashes,
   deleteChunksBySourceExcept,
   insertChunks,
@@ -130,33 +128,15 @@ async function storeLevel0Chunks(chunks, businessId, sourceRef) {
 }
 
 async function ingestNormalized(sections, { businessId, sourceRef }) {
-  try {
-    await updateClientStatus(businessId, 'ingesting');
-    await updateIngestProgress(businessId, 10);
-
-    if (!sections.length) {
-      throw new Error('No usable content extracted from source');
-    }
-
-    const fakePages = sections.map((s) => ({ url: s.url || sourceRef, content: s.content, heading: s.heading || null }));
-    const level0Chunks = buildSemanticChunks(fakePages, businessId);
-    await updateIngestProgress(businessId, 25);
-
-    await attachChunkEmbeddings(level0Chunks);
-    await updateIngestProgress(businessId, 40);
-
-    const stored = await storeLevel0Chunks(level0Chunks, businessId, sourceRef);
-    await updateIngestProgress(businessId, 55);
-
-    await updateIngestProgress(businessId, 90);
-
-    await updateClientStatus(businessId, 'active');
-    await updateIngestProgress(businessId, 100);
-    return { chunks: stored.added, unchanged: stored.unchanged, removed: stored.removed };
-  } catch (error) {
-    await updateClientStatus(businessId, 'error');
-    throw error;
+  if (!sections.length) {
+    throw new Error('No usable content extracted from source');
   }
+
+  const fakePages = sections.map((s) => ({ url: s.url || sourceRef, content: s.content, heading: s.heading || null }));
+  const level0Chunks = buildSemanticChunks(fakePages, businessId);
+  await attachChunkEmbeddings(level0Chunks);
+  const stored = await storeLevel0Chunks(level0Chunks, businessId, sourceRef);
+  return { chunks: stored.added, unchanged: stored.unchanged, removed: stored.removed };
 }
 
 async function reembedMissing() {

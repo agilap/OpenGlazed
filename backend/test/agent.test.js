@@ -124,3 +124,18 @@ test('auth/network errors surface instead of silently degrading', async () => {
     /bad key/
   );
 });
+
+test('citations list only the sources the answer cites, as clean excerpts', async () => {
+  const long = '## faq.md\n\n' + 'word '.repeat(80);
+  const retrieve = async () => ({ chunks: [
+    { id: 1, content: long, source_url: 'faq.md', level: 0 },
+    { id: 2, content: 'We ship worldwide', source_url: 'shipping.md', level: 0 },
+  ], confidence: 'medium', shouldEscalate: false });
+  const result = await runAgent({
+    business, message: 'q',
+    deps: { retrieve, chat: scriptedChat([{ toolCalls: [call('c1', 'search_knowledge', { query: 'q' })] }, { content: 'Yes [1].' }]) },
+  });
+  assert.deepEqual(result.citations.map((c) => c.source), ['faq.md']);
+  assert.ok(!result.citations[0].content.startsWith('##'), 'heading breadcrumb is dropped');
+  assert.ok(result.citations[0].content.endsWith('…') && !result.citations[0].content.includes('wor…'), 'cut on a word boundary');
+});

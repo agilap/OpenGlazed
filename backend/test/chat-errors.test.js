@@ -53,3 +53,31 @@ test('widget non-answers carry no sources and offer a follow-up; answers keep th
     assert.equal(done.followUp, followUp, status);
   }
 });
+
+test('chat saves only successful exchanges, in order', async () => {
+  const saved = [];
+  let fail = true;
+  const app = appWithAgent(async () => {
+    if (fail) throw new Error('Model failed');
+    return { response: 'Answer', citations: [], chunks: [], confidence: 'high', escalated: false, source: 'model' };
+  }, {
+    './services/guard': { classifyExchange: async () => ({ status: 'answered' }) },
+    './db': {
+      getClient: async () => ({ name: 'Test' }), getHistory: async () => [],
+      getClassificationContext: async () => ({}), saveMessage: async (...args) => saved.push(args),
+    },
+  });
+  const route = app._router.stack.find((layer) => layer.route?.path === '/api/chat/:businessId/stream').route;
+  const request = () => route.stack.at(-1).handle(
+    { params: { businessId: '1' }, body: { message: 'Question', sessionId: 's' } },
+    { writeHead() {}, on() {}, write() {}, end() {} },
+  );
+  await request();
+  assert.deepEqual(saved, []);
+  fail = false;
+  await request();
+  assert.deepEqual(saved, [
+    ['1', 's', 'visitor', 'Question', { channel: 'widget' }],
+    ['1', 's', 'assistant', 'Answer', { confidence: 'high', escalated: false, source: 'model', channel: 'widget', answer_status: 'answered' }],
+  ]);
+});

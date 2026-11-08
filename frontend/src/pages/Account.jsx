@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import AccountSettings from '../components/AccountSettings';
 import '../styles/account.css';
 
@@ -7,6 +7,9 @@ const API_BASE = import.meta.env.VITE_API_BASE || '';
 
 export default function Account({ mode }) {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  // Only same-site paths, so the link cannot send people to another site after sign-in.
+  const next = /^\/(?![/\\])/.test(params.get('next') || '') ? params.get('next') : '';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [account, setAccount] = useState(null);
@@ -36,7 +39,7 @@ export default function Account({ mode }) {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to continue.');
-      navigate('/account');
+      navigate(next || '/account');
     } catch (err) { setError(err.message); } finally { setLoading(false); }
   }
   async function logout() {
@@ -71,7 +74,7 @@ export default function Account({ mode }) {
             {error && <p id="account-auth-error" className="account-error" role="alert">{error}</p>}
             <button type="submit" disabled={loading}>{loading && <svg className="account-spinner" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true"><circle cx="12" cy="12" r="9" opacity=".3" /><path d="M12 3a9 9 0 0 1 9 9" /></svg>}{loading ? 'Please wait…' : signup ? 'Create account' : 'Sign in'}</button>
           </form>
-          <p className="account-switch">{signup ? 'Already have an account?' : 'New to Glazed AI?'} <Link to={signup ? '/login' : '/signup'}>{signup ? 'Sign in' : 'Create an account'}</Link></p>
+          <p className="account-switch">{signup ? 'Already have an account?' : 'New to Glazed AI?'} <Link to={(signup ? '/login' : '/signup') + (next ? '?next=' + encodeURIComponent(next) : '')}>{signup ? 'Sign in' : 'Create an account'}</Link></p>
         </div>
       </section> : <section className="account-workspace">
         <div className="account-workspace-heading"><div><p className="account-eyebrow">WORKSPACE</p><h1>Your workspaces</h1><p>{account?.user.email}</p></div></div>
@@ -79,7 +82,7 @@ export default function Account({ mode }) {
         {loading ? <div className="account-grid" role="status" aria-label="Loading workspaces"><div className="account-skeleton" /><div className="account-skeleton" /></div> : <div className="account-grid">
           {(account?.businesses || []).map((business) => {
             const date = business.created_at && new Date(business.created_at);
-            return <Link className="account-card" key={business.id} to={`/dashboard/${business.id}/overview`}><strong>{business.name}</strong><span className="account-status"><span className={`account-status-dot account-status-dot--${business.ingest_status || 'pending'}`} />{business.ingest_status || 'pending'}</span>{business.document_count != null && <small>{business.document_count} ready documents</small>}{Number(business.open_unanswered) > 0 && <span className="account-unanswered">{business.open_unanswered} unanswered</span>}{date && !Number.isNaN(date.getTime()) && <small>Created {date.toLocaleDateString()}</small>}</Link>;
+            return <Link className="account-card" key={business.id} to={`/dashboard/${business.id}/overview`}><strong>{business.name}</strong>{business.document_count != null && <small>{business.document_count} ready documents</small>}{Number(business.open_unanswered) > 0 && <span className="account-unanswered">{business.open_unanswered} unanswered</span>}{date && !Number.isNaN(date.getTime()) && <small>Created {date.toLocaleDateString()}</small>}</Link>;
           })}
           <Link className="account-card account-card-new" to="/workspaces/new"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>New workspace</Link>
         </div>}

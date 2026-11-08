@@ -52,12 +52,12 @@ test('admin token must match exactly', async (t) => {
 
 test('bad ids are rejected before any query, without leaking database errors', async (t) => {
   const base = await withServer(t);
-  for (const url of ['/api/chat/abc/history?sessionId=s', '/api/ingest/abc/status', '/api/dashboard/1e3/stats', '/api/team/-1/threads']) {
+  for (const url of ['/api/chat/abc/history?sessionId=s', '/api/dashboard/abc/stats', '/api/dashboard/1e3/stats', '/api/team/-1/threads']) {
     const response = await fetch(base + url, { headers: { Authorization: 'Bearer limits-test-admin' } });
     assert.equal(response.status, 400, url);
   }
   assert.equal((await fetch(`${base}/api/businesses/abc`)).status, 404);
-  assert.equal((await fetch(`${base}/api/ingest/1/status`)).status, 401, 'ingest status needs sign-in');
+  assert.equal((await fetch(`${base}/api/dashboard/1/stats`)).status, 401, 'dashboard needs sign-in');
   const failed = await fetch(`${base}/api/dashboard/1/stats`, { headers: { Authorization: 'Bearer limits-test-admin' } });
   assert.equal(failed.status, 500);
   assert.deepEqual(await failed.json(), { error: 'Internal server error' });

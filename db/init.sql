@@ -66,17 +66,6 @@ ALTER TABLE businesses ADD COLUMN IF NOT EXISTS primary_offering text;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS industry         text;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS pricing_model    text;
 
-CREATE TABLE IF NOT EXISTS summaries (
-  id               BIGSERIAL PRIMARY KEY,
-  business_id      BIGINT REFERENCES businesses(id) ON DELETE CASCADE,
-  level            INTEGER NOT NULL,
-  cluster_id       INTEGER,
-  content          TEXT NOT NULL,
-  embedding        vector(1536),
-  source_chunk_ids BIGINT[],
-  created_at       TIMESTAMPTZ DEFAULT now()
-);
-
 CREATE TABLE IF NOT EXISTS eval_logs (
   id                       BIGSERIAL PRIMARY KEY,
   business_id              BIGINT REFERENCES businesses(id) ON DELETE CASCADE,
@@ -102,12 +91,9 @@ CREATE INDEX IF NOT EXISTS idx_messages_role          ON messages(business_id, r
 CREATE INDEX IF NOT EXISTS idx_messages_channel       ON messages(business_id, channel, session_id);
 CREATE INDEX IF NOT EXISTS chunks_embedding_idx
   ON chunks USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);
-CREATE INDEX IF NOT EXISTS summaries_embedding_idx
-  ON summaries USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);
 CREATE INDEX IF NOT EXISTS chunks_fts_idx ON chunks USING gin(fts);
 CREATE INDEX IF NOT EXISTS idx_eval_logs_business ON eval_logs(business_id);
 CREATE INDEX IF NOT EXISTS idx_eval_logs_session  ON eval_logs(session_id);
-CREATE INDEX IF NOT EXISTS idx_summaries_business_level ON summaries(business_id, level);
 
 CREATE OR REPLACE FUNCTION match_chunks(
   query_embedding  vector(1536),
@@ -176,37 +162,6 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION match_summaries(
-  query_embedding vector(1536),
-  p_business_id   bigint,
-  p_level         int,
-  match_count     int DEFAULT 5
-)
-RETURNS TABLE (
-  id          bigint,
-  content     text,
-  level       int,
-  cluster_id  int,
-  similarity  float
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-  RETURN QUERY
-  SELECT
-    s.id,
-    s.content,
-    s.level,
-    s.cluster_id,
-    1 - (s.embedding <=> query_embedding) AS similarity
-  FROM summaries s
-  WHERE s.business_id = p_business_id
-    AND s.level        = p_level
-    AND s.embedding   IS NOT NULL
-  ORDER BY s.embedding <=> query_embedding
-  LIMIT match_count;
-END;
-$$;
 CREATE TABLE IF NOT EXISTS request_traces (
   id uuid PRIMARY KEY,
   business_id bigint NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
