@@ -23,8 +23,11 @@ const allowedOrigin = process.env.FRONTEND_ORIGIN       || 'http://localhost:517
 const embedOrigin   = process.env.FRONTEND_EMBED_ORIGIN || allowedOrigin;
 
 const sha256 = (value) => crypto.createHash('sha256').update(value).digest();
-const ADMIN_DIGEST = process.env.ADMIN_TOKEN ? sha256(process.env.ADMIN_TOKEN) : null;
-if (!ADMIN_DIGEST) console.log('[auth] ADMIN_TOKEN not set — admin token access is disabled; sign in with an account.');
+const adminToken = process.env.ADMIN_TOKEN || '';
+const weakAdminToken = process.env.NODE_ENV === 'production' && adminToken.length > 0 && adminToken.length < 32;
+if (weakAdminToken) console.error('[auth] ADMIN_TOKEN is shorter than 32 characters — admin token access is disabled in production.');
+else if (!adminToken) console.log('[auth] ADMIN_TOKEN not set — admin token access is disabled; sign in with an account.');
+const ADMIN_DIGEST = adminToken && !weakAdminToken ? sha256(adminToken) : null;
 function isAdminToken(token) {
   // Hash both sides so timingSafeEqual gets equal-length buffers and leaks no length.
   return Boolean(ADMIN_DIGEST && token) && crypto.timingSafeEqual(sha256(token), ADMIN_DIGEST);
@@ -92,7 +95,8 @@ const smallJson = express.json({ limit: '100kb' });
 const uploadJson = express.json({ limit: '25mb' });
 const UPLOAD_PATH = /^\/api\/(sources\/[^/]+|v1\/documents)\/?$/;
 app.use(function (req, res, next) {
-  return (req.method === 'POST' && UPLOAD_PATH.test(req.path) ? uploadJson : smallJson)(req, res, next);
+  // Upload routes read their 25 MB body only after auth, so anonymous requests cannot fill memory.
+  return req.method === 'POST' && UPLOAD_PATH.test(req.path) ? next() : smallJson(req, res, next);
 });
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
@@ -394,7 +398,7 @@ app.get('/api/businesses/:id/dashboard', requireAdmin, asyncRoute(async function
 
 const MAX_DOCUMENT_BYTES = 18 * 1024 * 1024;
 
-app.post('/api/sources/:businessId', requireAdmin, asyncRoute(async function (req, res) {
+app.post('/api/sources/:businessId', requireAdmin, uploadJson, asyncRoute(async function (req, res) {
   var businessId = Number(req.params.businessId);
   var business = await db.getBusinessById(businessId);
   if (!business) return res.status(404).json({ error: 'Business not found' });
@@ -668,7 +672,7 @@ app.get('/api/v1/documents', requireApiKey, asyncRoute(async function (req, res)
   res.json({ documents: await db.listDocuments(req.businessId) });
 }));
 
-app.post('/api/v1/documents', requireApiKey, asyncRoute(async function (req, res) {
+app.post('/api/v1/documents', requireApiKey, uploadJson, asyncRoute(async function (req, res) {
   return acceptDocument(req.businessId, req.body || {}, res);
 }));
 

@@ -47,9 +47,25 @@ function zipUncompressedSize(buf) {
   return total;
 }
 
+// shortcut: per-process cap; each extra server instance gets its own 2 slots.
+const MAX_PARSE_WORKERS = 2;
+let activeParses = 0;
+const waitingParses = [];
+async function withParseSlot(fn) {
+  if (activeParses >= MAX_PARSE_WORKERS) await new Promise((resolve) => waitingParses.push(resolve));
+  else activeParses += 1;
+  try {
+    return await fn();
+  } finally {
+    const next = waitingParses.shift();
+    if (next) next(); // hand the slot straight over, so a newcomer cannot slip in between
+    else activeParses -= 1;
+  }
+}
+
 function parseInWorker(sourceType, { data, filename }) {
   if (sourceType === 'docx' && zipUncompressedSize(data) > MAX_DOCX_UNCOMPRESSED) return Promise.reject(new Error('This Word document expands to more than 200 MB.'));
-  return new Promise((resolve, reject) => {
+  return withParseSlot(() => new Promise((resolve, reject) => {
     const worker = new Worker(path.join(__dirname, 'parseWorker.js'), { workerData: { sourceType, data, filename }, resourceLimits: { maxOldGenerationSizeMb: 512 } });
     let settled = false;
     const finish = (error, sections) => {
@@ -63,7 +79,7 @@ function parseInWorker(sourceType, { data, filename }) {
     worker.once('message', (message) => finish(message.error ? new Error(message.error) : null, message.sections));
     worker.once('error', (error) => finish(error.code === 'ERR_WORKER_OUT_OF_MEMORY' ? new Error('This file needs too much memory to read.') : error));
     worker.once('exit', () => finish(new Error('The file reader stopped unexpectedly.')));
-  });
+  }));
 }
 
 function documentTypeFor(filename) {
@@ -111,4 +127,4 @@ async function recoverInterrupted({ businessId = null } = {}) {
   return { failed: failed.rowCount, deleting: deleting.rowCount };
 }
 
-module.exports = { recoverInterrupted, parseInWorker, zipUncompressedSize, ingestSource, ingestDocument, removeDocument, documentTypeFor, BINARY_TYPES, SUPPORTED, PARSERS };
+module.exports = { recoverInterrupted, parseInWorker, withParseSlot, zipUncompressedSize, ingestSource, ingestDocument, removeDocument, documentTypeFor, BINARY_TYPES, SUPPORTED, PARSERS };

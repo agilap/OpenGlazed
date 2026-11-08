@@ -83,3 +83,12 @@ test('chat to an unknown workspace is 404 and not counted', async (t) => {
   const base = await withServer(t);
   assert.equal((await post(`${base}/api/chat/404/stream`, { message: 'hi', sessionId: 's' })).status, 404);
 });
+
+test('upload routes check auth before reading the body', async (t) => {
+  const base = await withServer(t);
+  // An unread body means the auth check answers, not the JSON parser (which would say 400).
+  for (const path of ['/api/sources/1', '/api/v1/documents']) {
+    const response = await fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{not json' });
+    assert.equal(response.status, 401, path);
+  }
+});

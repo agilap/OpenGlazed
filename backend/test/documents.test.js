@@ -131,3 +131,17 @@ test('documents are scoped to their workspace and stats use document metrics', {
     await db.pool.end();
   }
 });
+
+test('file parsing runs at most two workers at once', async () => {
+  const { withParseSlot } = require('../src/sources');
+  let running = 0;
+  let peak = 0;
+  const job = () => withParseSlot(async () => {
+    running += 1; peak = Math.max(peak, running);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    running -= 1;
+  });
+  await Promise.all([job(), job(), job(), job(), job()]);
+  assert.equal(peak, 2);
+  assert.equal(running, 0);
+});
